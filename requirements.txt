@@ -1,0 +1,4 @@
+# JARVIS Core Dependencies
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+google-genai>=2.28.0
