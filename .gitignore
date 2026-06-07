@@ -29,35 +29,3 @@ share/python-wheels/
 # Virtual Environment
 venv/
 env/
-ENV/
-env.bak/
-venv.bak/
-
-# Testing & Coverage
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-
-# Local databases, logs, and caches
-*.db
-*.sqlite
-*.sqlite3
-data/jarvis_memory.db
-data/calendar/*.ics
-data/scratch/*
-!data/scratch/.gitkeep
-!data/calendar/.gitkeep
-!data/notes/.gitkeep
-logs/*.log
-*.log
-
-# Scratch archives and test outputs
-nova_app.json
-jarvis.zip
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-._*
