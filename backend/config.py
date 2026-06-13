@@ -4,3 +4,8 @@ Handles environment variables, default paths, and system settings.
 """
 
 import os
+from typing import List, Optional
+from pathlib import Path
+from pydantic import BaseModel, Field
+
+# Base Directory paths
