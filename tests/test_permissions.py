@@ -34,3 +34,31 @@ def test_level_2_external_requires_token():
     assert "Level 2" in reason
 
 
+def test_level_3_high_risk_token_flow():
+    engine = PermissionEngine()
+    
+    # Request destructive operation
+    permitted, token, _ = engine.verify_permission(
+        "terminal", "rm -rf", "./build", ActionLevel.LEVEL_3_HIGH_RISK
+    )
+    assert permitted is False
+    assert token is not None
+
+    # User confirms token
+    ok = engine.confirm_token(token.token_id)
+    assert ok is True
+
+    # Re-verify with confirmed token
+    permitted_now, consumed_token, reason = engine.verify_permission(
+        "terminal", "rm -rf", "./build", ActionLevel.LEVEL_3_HIGH_RISK, token_id=token.token_id
+    )
+    assert permitted_now is True
+    assert consumed_token is not None
+
+    # Verify one-time consumption: using the token a second time must fail!
+    p_again, _, err = engine.verify_permission(
+        "terminal", "rm -rf", "./build", ActionLevel.LEVEL_3_HIGH_RISK, token_id=token.token_id
+    )
+    assert p_again is False
+
+
