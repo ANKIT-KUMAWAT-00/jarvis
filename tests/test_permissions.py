@@ -62,3 +62,27 @@ def test_level_3_high_risk_token_flow():
     assert p_again is False
 
 
+def test_token_narrow_scope_tampering_protection():
+    engine = PermissionEngine()
+    
+    # Token created for deleting ./temp
+    _, token, _ = engine.verify_permission("terminal", "rm -rf", "./temp", ActionLevel.LEVEL_3_HIGH_RISK)
+    engine.confirm_token(token.token_id)
+
+    # Malicious attempt: use token confirmed for ./temp to delete /root instead
+    permitted, _, err = engine.verify_permission(
+        "terminal", "rm -rf", "/root", ActionLevel.LEVEL_3_HIGH_RISK, token_id=token.token_id
+    )
+    assert permitted is False
+    assert "Security violation" in err
+
+
+def test_token_rejection():
+    engine = PermissionEngine()
+    _, token, _ = engine.verify_permission("git", "push", "origin", ActionLevel.LEVEL_2_EXTERNAL)
+    
+    # Reject token
+    engine.reject_token(token.token_id)
+    permitted, _, err = engine.verify_permission("git", "push", "origin", ActionLevel.LEVEL_2_EXTERNAL, token_id=token.token_id)
+    assert permitted is False
+    assert "rejected" in err.lower()
