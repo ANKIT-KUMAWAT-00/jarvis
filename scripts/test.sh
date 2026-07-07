@@ -8,3 +8,5 @@ cd "$DIR"
 echo "Running full JARVIS test suite..."
 if [ -f "./venv/bin/pytest" ]; then
     PYTEST_BIN="./venv/bin/pytest"
+else
+    PYTEST_BIN="pytest"
