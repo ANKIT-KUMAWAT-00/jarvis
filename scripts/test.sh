@@ -10,3 +10,6 @@ if [ -f "./venv/bin/pytest" ]; then
     PYTEST_BIN="./venv/bin/pytest"
 else
     PYTEST_BIN="pytest"
+fi
+
+exec "$PYTEST_BIN" -v "$@"
