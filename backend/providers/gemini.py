@@ -6,3 +6,6 @@ dead-key pruning, strict timeouts, and multi-key pooling with automatic failover
 """
 
 import os
+import json
+import base64
+import logging
