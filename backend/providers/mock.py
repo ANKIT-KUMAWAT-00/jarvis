@@ -5,3 +5,5 @@ unit tests, preflight checks, and demonstrations without API keys.
 """
 
 import json
+import re
+import urllib.parse
