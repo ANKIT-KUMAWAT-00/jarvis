@@ -18,3 +18,10 @@ class PlanStep(BaseModel):
     risk_level: int = 1
 
 
+class TaskAction(BaseModel):
+    type: str
+    target: Optional[str] = None
+    query: Optional[str] = None
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+
+
