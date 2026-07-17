@@ -14,3 +14,8 @@ import time
 from typing import List, Dict, Any, Optional, Type, Union
 from pydantic import BaseModel
 from .base import LLMProvider, PlanResult, PlanStep
+from backend.security.guardrails import PromptInjectionGuard
+
+logger = logging.getLogger("jarvis.gemini")
+
+CHAT_TIMEOUT_SECONDS = 8.0
