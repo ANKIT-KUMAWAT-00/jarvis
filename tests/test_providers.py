@@ -33,3 +33,29 @@ async def test_mock_provider_chat_responses():
 
 
 @pytest.mark.asyncio
+async def test_mock_provider_structured_planning():
+    provider = MockProvider()
+    plan = await provider.plan("Create a React application called Nova")
+    
+    assert isinstance(plan, PlanResult)
+    assert plan.goal == "Create a React application called Nova"
+    assert plan.requires_tools is True
+    assert len(plan.steps) >= 3
+    assert plan.steps[0].tool_name == "filesystem"
+    assert plan.steps[0].action == "list_dir"
+
+
+@pytest.mark.asyncio
+async def test_mock_provider_structured_output():
+    provider = MockProvider()
+    result = await provider.generate_structured(
+        prompt="Analyze safety of operation",
+        schema_class=SampleOutputSchema
+    )
+    assert isinstance(result, SampleOutputSchema)
+    assert isinstance(result.intent, str)
+    assert isinstance(result.confidence, float)
+    assert isinstance(result.is_safe, bool)
+
+
+@pytest.mark.asyncio
