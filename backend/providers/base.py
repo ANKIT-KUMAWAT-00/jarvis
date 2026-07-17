@@ -25,3 +25,19 @@ class TaskAction(BaseModel):
     parameters: Dict[str, Any] = Field(default_factory=dict)
 
 
+class TaskDependency(BaseModel):
+    type: str  # application_installed, macos_permission, network
+    name: str  # Spotify, Accessibility, etc.
+    resolved: bool = False
+    resolution_path: Optional[str] = None
+
+
+class TaskObject(BaseModel):
+    intent: str
+    target: str
+    actions: List[TaskAction] = Field(default_factory=list)
+    dependencies: List[TaskDependency] = Field(default_factory=list)
+    permissions: List[str] = Field(default_factory=list)
+    status: str = "pending"
+
+
