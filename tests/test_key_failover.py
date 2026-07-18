@@ -13,3 +13,25 @@ def test_gemini_provider_key_pool_collection():
     assert p.get_model_name() == "gemini-3.8-flash (Pool: 3 keys, Active: #1)"
 
 
+def test_gemini_provider_rotation():
+    p = GeminiProvider(
+        api_keys=["keyA", "keyB"],
+        model_name="gemini-3.8-flash"
+    )
+    assert p.current_key_index == 0
+    assert p.api_key == "keyA"
+
+    # Rotate 1
+    rotated = p.rotate_key("Rate limit on keyA")
+    assert rotated is True
+    assert p.current_key_index == 1
+    assert p.api_key == "keyB"
+    assert "Active: #2" in p.get_model_name()
+
+    # Rotate wrap around
+    rotated = p.rotate_key("Rate limit on keyB")
+    assert rotated is True
+    assert p.current_key_index == 0
+    assert p.api_key == "keyA"
+
+
