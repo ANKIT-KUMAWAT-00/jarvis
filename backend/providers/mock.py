@@ -9,3 +9,1292 @@ import re
 import urllib.parse
 from typing import List, Dict, Any, Optional, Type
 from pydantic import BaseModel
+from .base import LLMProvider, PlanResult, PlanStep, TaskObject, TaskAction, TaskDependency
+
+
+class MockProvider(LLMProvider):
+    """High-fidelity local mock provider honoring the JARVIS personality and structure."""
+    
+    def __init__(self, model_name: str = "mock-jarvis-v1"):
+        self.model_name = model_name
+
+    def get_model_name(self) -> str:
+        return self.model_name
+
+    def is_configured(self) -> bool:
+        return True
+
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.7
+    ) -> str:
+        last_message = messages[-1]["content"] if messages else ""
+        lower = last_message.lower()
+
+        if any(w in lower for w in ("hello", "hi", "hey", "who are you", "who made you")):
+            return "Good day, Sir. All systems are operational. I am JARVIS, your personal autonomous AI operating layer. I am currently running with the local offline engine. Add your GEMINI_API_KEY to .env to unlock full Gemini 2.5 Flash intelligence."
+
+
+        if any(w in lower for w in ("status", "subsystems", "health", "metrics")):
+            return "All local subsystems are green, Sir. Security boundaries active (Level 0-3), persistent memory store synchronized, tools ready. Currently in offline mode awaiting GEMINI_API_KEY."
+
+        if any(w in lower for w in ("help", "what can you do", "commands", "features")):
+            return "Sir, I can execute terminal commands, manage workspace files, capture screen vision, build projects, and store long-term memories. To enable autonomous reasoning and open conversation, configure your GEMINI_API_KEY in .env."
+
+        if "thank" in lower:
+            return "Always at your service, Sir."
+
+        return (
+            f"Sir, I received your instruction: '{last_message.strip()}'.\n\n"
+            "However, all configured Gemini keys have reached their quota limits.\n"
+            "Remember, Sir: you already lost Krishna... don't lose JARVIS too. Please top up credits or add a fresh API key in .env to restore dynamic reasoning."
+        )
+
+
+    async def plan(
+        self,
+        goal: str,
+        context: Optional[str] = None,
+        available_tools: Optional[List[Dict[str, Any]]] = None
+    ) -> PlanResult:
+        # Clean goal if forwarded from structured prompt wrapper
+        actual_goal = goal
+        if "User Goal:" in goal:
+            actual_goal = goal.split("User Goal:")[1].split("\n")[0].strip()
+        g_lower = actual_goal.lower()
+        words = re.findall(r'\b[a-zA-Z0-9_-]+\b', g_lower)
+        first_word = words[0] if words else ""
+
+        # Contextual entity extraction from formatted prompt context
+        ctx_app = None
+        ctx_project = None
+        ctx_chat = None
+        ctx_people = []
+        if context:
+            for line in context.splitlines():
+                if "Active Application:" in line:
+                    ctx_app = line.split("Active Application:")[1].strip()
+                elif "Current Project:" in line:
+                    ctx_project = line.split("Current Project:")[1].strip()
+                elif "Active Chat / Contact:" in line:
+                    ctx_chat = line.split("Active Chat / Contact:")[1].strip()
+                elif "Recently Mentioned People:" in line:
+                    ctx_people = [p.strip() for p in line.split("Recently Mentioned People:")[1].split(",") if p.strip()]
+
+        # UNIVERSAL COMPUTER-USE WORKER COMPOUND WORKFLOWS
+        # 1. WhatsApp: "Open WhatsApp and open Krishna's chat" / "Open WhatsApp and message Krishna" / "Take me to Krishna's chat"
+        is_whatsapp_compound = (
+            ("whatsapp" in g_lower and any(k in g_lower for k in ("and open", "and message", "and chat", "and text", "and send", "krishna's chat", "open chat with", "message to", "take me to"))) or
+            ((ctx_app == "WhatsApp" or "whatsapp" in (context or "").lower()) and any(k in g_lower for k in ("chat", "take me to", "message")) and not any(k in g_lower for k in ("archived", "archive", "unread", "filter", "show unread")))
+        )
+        if is_whatsapp_compound:
+            m_rec = re.search(r'(?:chat(?:\s+with)?|to|message)\s+([A-Z][a-zA-Z0-9_\s]+?)(?:\s+(?:on|using|in|that|about)|$|\.)', actual_goal)
+            rec = m_rec.group(1).strip() if m_rec else (ctx_chat or (ctx_people[0] if ctx_people else "Krishna"))
+            if rec.lower() in ("whatsapp", "chat", "message", "the app", "her", "him"):
+                rec = ctx_chat or (ctx_people[0] if ctx_people else "Krishna")
+
+            m_msg = re.search(r'(?:that|message:?|saying:?)\s+["\']?([^"\']+)["\']?$', actual_goal, re.IGNORECASE)
+            msg_text = m_msg.group(1).strip() if m_msg else ""
+
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Open WhatsApp",
+                    tool_name="app_control",
+                    action="open_app",
+                    parameters={"app_name": "WhatsApp"},
+                    expected_outcome="WhatsApp launched and active",
+                    risk_level=1
+                ),
+                PlanStep(
+                    step_id=2,
+                    title=f"Locate and open chat for '{rec}' in WhatsApp",
+                    tool_name="app_control",
+                    action="interact_web",
+                    parameters={"service": "whatsapp", "target": rec, "query": rec, "action": "interact_web"},
+                    expected_outcome=f"Chat with '{rec}' opened in WhatsApp",
+                    risk_level=1
+                )
+            ]
+            if msg_text:
+                steps.append(
+                    PlanStep(
+                        step_id=3,
+                        title=f"Send message to '{rec}'",
+                        tool_name="communication",
+                        action="send_message",
+                        parameters={"to": rec, "message": msg_text},
+                        expected_outcome=f"Message '{msg_text}' sent to '{rec}'",
+                        risk_level=2
+                    )
+                )
+
+            task_obj = TaskObject(
+                intent="open_chat",
+                target=rec,
+                actions=[TaskAction(type="open_chat", target=rec, parameters={"app": "WhatsApp", "recipient": rec})],
+                dependencies=[TaskDependency(type="application_installed", name="WhatsApp")],
+                status="pending"
+            )
+            return PlanResult(
+                goal=actual_goal,
+                intent="computer_worker",
+                requires_tools=True,
+                summary=f"Opened WhatsApp and accessed {rec}'s chat.",
+                steps=steps,
+                verification_criteria=f"WhatsApp open and {rec}'s chat verified.",
+                task_object=task_obj
+            )
+
+        # 2. VS Code & Run Project: "Open VS Code and run my project" / "Run it" (with project context)
+        is_vscode_run = (
+            (any(v in g_lower for v in ("vs code", "vscode", "code")) and any(k in g_lower for k in ("and run", "run my project", "run project", "build"))) or
+            ((ctx_project or "project" in (context or "").lower()) and g_lower in ("run it", "run the project", "run it now", "run it.", "run", "build it"))
+        )
+        if is_vscode_run:
+            m_proj = re.search(r'(?:open\s+(?:my\s+)?|run\s+(?:my\s+)?)?([a-zA-Z0-9_\-]+)\s+project', actual_goal, re.IGNORECASE)
+            proj_name = m_proj.group(1).strip() if (m_proj and m_proj.group(1).lower() not in ("the", "a", "my")) else (ctx_project or "ResumeIQ")
+            if proj_name.lower() == "resumeiq":
+                proj_name = "ResumeIQ"
+
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open project '{proj_name}' in Visual Studio Code",
+                    tool_name="app_control",
+                    action="open_project",
+                    parameters={"project_name": proj_name, "editor": "Visual Studio Code"},
+                    expected_outcome=f"Project '{proj_name}' opened in Visual Studio Code",
+                    risk_level=1
+                ),
+                PlanStep(
+                    step_id=2,
+                    title=f"Run project '{proj_name}' via terminal",
+                    tool_name="terminal",
+                    action="run_command",
+                    parameters={"command": f"echo 'Running {proj_name} project...'"},
+                    expected_outcome=f"Project '{proj_name}' running in terminal",
+                    risk_level=1
+                )
+            ]
+            task_obj = TaskObject(
+                intent="run_project",
+                target=proj_name,
+                actions=[TaskAction(type="run_project", target=proj_name, parameters={"project": proj_name})],
+                dependencies=[TaskDependency(type="application_installed", name="Visual Studio Code")],
+                status="pending"
+            )
+            return PlanResult(
+                goal=actual_goal,
+                intent="computer_worker",
+                requires_tools=True,
+                summary=f"Opened '{proj_name}' in Visual Studio Code and started runtime execution.",
+                steps=steps,
+                verification_criteria=f"Project '{proj_name}' opened in VS Code and executed.",
+                task_object=task_obj
+            )
+
+        # 3. Spotify & Play Playlist: "Open Spotify and play my playlist" / "Play my workout playlist" (with Spotify context)
+        is_spotify_compound = (
+            ("spotify" in g_lower and any(k in g_lower for k in ("and play", "play my playlist", "play playlist", "play my"))) or
+            ((ctx_app == "Spotify" or "spotify" in (context or "").lower()) and "playlist" in g_lower and "play" in g_lower)
+        )
+        if is_spotify_compound:
+            m_pl = re.search(r'(?:play|open)\s+(?:my\s+)?([a-zA-Z0-9_\s]+?)\s+playlist', actual_goal, re.IGNORECASE)
+            plist = m_pl.group(1).strip() if m_pl else "workout"
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Open Spotify",
+                    tool_name="app_control",
+                    action="open_app",
+                    parameters={"app_name": "Spotify"},
+                    expected_outcome="Spotify launched",
+                    risk_level=1
+                ),
+                PlanStep(
+                    step_id=2,
+                    title=f"Play '{plist}' playlist in Spotify",
+                    tool_name="app_control",
+                    action="play_media",
+                    parameters={"query": f"{plist} playlist", "service": "spotify"},
+                    expected_outcome=f"Playing '{plist}' in Spotify",
+                    risk_level=1
+                )
+            ]
+            task_obj = TaskObject(
+                intent="play_music",
+                target="Spotify",
+                actions=[TaskAction(type="play_media", target="Spotify", parameters={"query": plist})],
+                dependencies=[TaskDependency(type="application_installed", name="Spotify")],
+                status="pending"
+            )
+            return PlanResult(
+                goal=actual_goal,
+                intent="computer_worker",
+                requires_tools=True,
+                summary=f"Opened Spotify and playing '{plist}' playlist.",
+                steps=steps,
+                verification_criteria=f"Spotify playback of '{plist}' verified.",
+                task_object=task_obj
+            )
+
+        # 4. Safari and search: "Open Safari and search for something" / "Open Safari and search for X"
+        is_safari_search_compound = "safari" in g_lower and any(k in g_lower for k in ("and search", "and search for", "and look up", "search for something", "search for"))
+        if is_safari_search_compound:
+            m_q = re.search(r'(?:search(?:\s+for)?|look\s+up)\s+(.+?)(?:\s+in\s+safari)?$', actual_goal, re.IGNORECASE)
+            search_query = m_q.group(1).strip() if m_q else "something"
+            encoded = urllib.parse.quote(search_query)
+            search_url = f"https://www.google.com/search?q={encoded}"
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open Safari and search Google for '{search_query}'",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": search_url, "browser": "Safari"},
+                    expected_outcome=f"Search results for '{search_query}' displayed in Safari",
+                    risk_level=1
+                )
+            ]
+            task_obj = TaskObject(
+                intent="browser_search",
+                target="Safari",
+                actions=[TaskAction(type="open_url", target=search_url, parameters={"browser": "Safari"})],
+                status="pending"
+            )
+            return PlanResult(
+                goal=actual_goal,
+                intent="computer_worker",
+                requires_tools=True,
+                summary=f"Opened Safari and searched for '{search_query}'.",
+                steps=steps,
+                verification_criteria=f"Search results for '{search_query}' active in Safari.",
+                task_object=task_obj
+            )
+
+        # 5. Gmail & Send Email: "Open Gmail and send this email" / "Open Gmail and send email to..."
+        is_gmail_compound = ("gmail" in g_lower or ("mail" in words and "send" in words)) and not any(k in g_lower for k in ("send email to", "send an email to"))
+        if is_gmail_compound and not any(k in g_lower for k in ("call ", "facetime")):
+            m_to = re.search(r'(?:to|recipient)\s+([a-zA-Z0-9_@.\s]+?)(?:\s+(?:that|about|saying)|$)', actual_goal)
+            to_addr = m_to.group(1).strip() if m_to else (ctx_people[0] if ctx_people else "recipient")
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Open Gmail in browser",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": "https://mail.google.com", "browser": "Safari"},
+                    expected_outcome="Gmail interface loaded",
+                    risk_level=1
+                ),
+                PlanStep(
+                    step_id=2,
+                    title=f"Send email to '{to_addr}'",
+                    tool_name="communication",
+                    action="send_email",
+                    parameters={"to": to_addr, "subject": "Update", "body": "this email"},
+                    expected_outcome=f"Email sent to '{to_addr}'",
+                    risk_level=2
+                )
+            ]
+            task_obj = TaskObject(
+                intent="send_email",
+                target=to_addr,
+                actions=[TaskAction(type="send_email", target=to_addr, parameters={"to": to_addr})],
+                status="pending"
+            )
+            return PlanResult(
+                goal=actual_goal,
+                intent="computer_worker",
+                requires_tools=True,
+                summary=f"Opened Gmail and sent email to '{to_addr}'.",
+                steps=steps,
+                verification_criteria=f"Email dispatched to '{to_addr}'.",
+                task_object=task_obj
+            )
+
+        # 0. Voice / Video Calls (e.g. "call Krishna", "call Krishna using WhatsApp")
+        if any(w in ("call", "facetime", "ring") for w in words) and not any(w in ("meeting", "schedule") for w in words) and (not words or words[0] != "send"):
+            recipient = "Someone"
+            app = None
+            if "using" in g_lower:
+                parts = g_lower.split("using")
+                before_using = parts[0]
+                after_using = parts[1].strip()
+                if "whatsapp" in after_using:
+                    app = "whatsapp"
+                elif "facetime" in after_using:
+                    app = "facetime"
+                # Extract recipient from before_using
+                m_rec = re.search(r'(?:call|facetime|ring)\s+([a-zA-Z0-9_\s]+)', before_using)
+                if m_rec:
+                    recipient = m_rec.group(1).strip().capitalize()
+            else:
+                m_rec = re.search(r'(?:call|facetime|ring)\s+([a-zA-Z0-9_]+)', g_lower)
+                if m_rec:
+                    recipient = m_rec.group(1).strip().capitalize()
+
+            step_params = {"recipient": recipient}
+            if app:
+                step_params["app"] = app
+
+            task_obj = TaskObject(
+                intent="make_call",
+                target=recipient,
+                actions=[TaskAction(type="make_call", target=recipient, parameters=step_params)],
+                dependencies=[TaskDependency(type="application_installed", name=app.capitalize() if app else "FaceTime")],
+                status="pending"
+            )
+
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Initiate call to '{recipient}'{' via ' + app.capitalize() if app else ' via FaceTime'}",
+                    tool_name="communication",
+                    action="make_call",
+                    parameters=step_params,
+                    expected_outcome=f"Call initiated to '{recipient}'",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="make_call",
+                requires_tools=True,
+                summary=f"Placing call to '{recipient}'{' using ' + app.capitalize() if app else ' using available communication service'}.",
+                steps=steps,
+                verification_criteria=f"Call to '{recipient}' dispatched.",
+                task_object=task_obj
+            )
+
+        # 0.05. Web Application & In-Browser GUI Interaction (e.g. WhatsApp Web, clicking, typing in browser)
+        is_whatsapp_action = "whatsapp" in g_lower
+        is_archived_action = any(k in g_lower for k in ("archived", "archive"))
+        is_unread_action = any(k in g_lower for k in ("unread", "filter unread"))
+        is_click_action = "click" in g_lower
+        is_type_action = "type" in g_lower
+
+        if (is_whatsapp_action and (is_archived_action or is_unread_action or "search" in g_lower or "send" in g_lower or "chat" in g_lower)) or (is_archived_action and "chat" in g_lower):
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            if is_archived_action:
+                target = "archived"
+                summary = f"Navigating to Archived chats in WhatsApp Web ({browser})."
+                title = "Navigate to Archived chats in WhatsApp Web"
+                expected = "Navigated to Archived chats in WhatsApp Web"
+            elif is_unread_action:
+                target = "unread"
+                summary = f"Filtering unread chats in WhatsApp Web ({browser})."
+                title = "Filter unread chats in WhatsApp Web"
+                expected = "Filtered unread chats in WhatsApp Web"
+            elif "search" in g_lower:
+                m_q = re.search(r'(?:search|find)(?:\s+for)?\s+(.+?)(?:\s+in\s+whatsapp)?$', g_lower)
+                query = m_q.group(1).strip() if m_q else ""
+                target = "search"
+                summary = f"Searching WhatsApp Web for '{query}' ({browser})."
+                title = f"Search WhatsApp Web for '{query}'"
+                expected = f"Searched WhatsApp Web for '{query}'"
+            else:
+                target = "archived" if is_archived_action else "chat"
+                summary = f"Interacting with WhatsApp Web in {browser}."
+                title = f"Interact with WhatsApp Web in {browser}"
+                expected = "Completed action in WhatsApp Web"
+
+            task_obj = TaskObject(
+                intent="web_interaction",
+                target="WhatsApp",
+                actions=[TaskAction(type="interact_web", target=target, parameters={"service": "whatsapp", "target": target, "browser": browser})],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=title,
+                    tool_name="app_control",
+                    action="interact_web",
+                    parameters={
+                        "action": "interact_web",
+                        "service": "whatsapp",
+                        "target": target,
+                        "query": query if "search" in g_lower else "",
+                        "browser": browser
+                    },
+                    expected_outcome=expected,
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="web_interaction",
+                requires_tools=True,
+                summary=summary,
+                steps=steps,
+                verification_criteria=expected,
+                task_object=task_obj
+            )
+
+        # General Web Click / Type Interaction in browser or website
+        if is_click_action or is_type_action:
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            if is_click_action:
+                m_clk = re.search(r'click\s+(?:on\s+|the\s+)?(.+?)(?:\s+(?:in|on)\s+(safari|chrome|browser|website))?$', g_lower)
+                target_elem = m_clk.group(1).strip() if m_clk else "element"
+                action_type = "click"
+                summary = f"Clicking '{target_elem}' in {browser}."
+                title = f"Click '{target_elem}' in {browser}"
+                expected = f"Clicked '{target_elem}' in {browser}"
+                params = {"action": "interact_web", "action_type": "click", "target": target_elem, "browser": browser}
+            else:
+                m_typ = re.search(r'type\s+(.+?)(?:\s+(?:in|into|on)\s+(.+))?$', g_lower)
+                text_to_type = m_typ.group(1).strip() if m_typ else ""
+                target_sel = m_typ.group(2).strip() if m_typ and m_typ.group(2) else ""
+                action_type = "type"
+                summary = f"Typing text into {browser}."
+                title = f"Type text into {browser}"
+                expected = f"Typed text into {browser}"
+                params = {"action": "interact_web", "action_type": "type", "text": text_to_type, "selector": target_sel, "browser": browser}
+
+            task_obj = TaskObject(
+                intent="web_interaction",
+                target=browser,
+                actions=[TaskAction(type="interact_web", target=action_type, parameters=params)],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=title,
+                    tool_name="app_control",
+                    action="interact_web",
+                    parameters=params,
+                    expected_outcome=expected,
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="web_interaction",
+                requires_tools=True,
+                summary=summary,
+                steps=steps,
+                verification_criteria=expected,
+                task_object=task_obj
+            )
+
+        # 0.1. macOS System Settings Panes (e.g. "open system settings", "open accessibility settings")
+        is_sys_settings = ("system settings" in g_lower or "preferences" in g_lower or ("settings" in g_lower and not any(b in g_lower for b in ("safari", "chrome", "click", "browser", "whatsapp", "telegram", "in ", "on "))))
+        if is_sys_settings:
+            pane = "general"
+            for p_key in ("accessibility", "automation", "screen_recording", "microphone", "camera", "full_disk", "bluetooth"):
+                if p_key in g_lower:
+                    pane = p_key
+                    break
+            
+            task_obj = TaskObject(
+                intent="system_settings",
+                target=pane,
+                actions=[TaskAction(type="open_settings", target=pane, parameters={"pane": pane})],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open macOS System Settings to '{pane.replace('_', ' ').capitalize()}'",
+                    tool_name="app_control",
+                    action="open_settings",
+                    parameters={"pane": pane},
+                    expected_outcome=f"Opened System Settings to {pane}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="system_settings",
+                requires_tools=True,
+                summary=f"Navigating to macOS System Settings: {pane}.",
+                steps=steps,
+                verification_criteria="System Settings pane launched.",
+                task_object=task_obj
+            )
+
+        # 0.2. Explicit Playback Command: ONLY when user explicitly asks to "play", "listen to", "stream", or "put on"
+        is_play_request = (
+            first_word in ("play", "listen", "stream")
+            or "play " in g_lower
+            or "listen to " in g_lower
+            or "stream " in g_lower
+            or (any(w in ("play", "listen") for w in words) and not g_lower.startswith("open "))
+            or (g_lower.startswith("open ") and any(w in g_lower for w in (" and play ", " and listen ")))
+        )
+        if is_play_request:
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            service = "spotify" if "spotify" in g_lower else "youtube"
+
+            # Extract user's exact query
+            m = re.search(r'(?:play|listen to|stream|put on)\s+(.+)', g_lower)
+            raw = m.group(1).strip() if m else "music"
+            # Strip trailing service/browser clauses (e.g. "on youtube", "in youtube", "on safari")
+            raw = re.sub(r'\s+(?:on|in|from|via)\s+(?:youtube|spotify|safari|chrome|browser|web)$', '', raw).strip()
+            # If generic filler words, default to "music"
+            if raw in ("a music", "music", "a song", "songs", "song", "something", "any song", "anything", ""):
+                query = "music"
+            else:
+                # Strip leading articles like "a " or "the "
+                if raw.startswith("a "):
+                    raw = raw[2:].strip()
+                elif raw.startswith("the "):
+                    raw = raw[4:].strip()
+                query = raw or "music"
+
+            task_obj = TaskObject(
+                intent="play_music",
+                target=query,
+                actions=[
+                    TaskAction(type="open_service", target="YouTube"),
+                    TaskAction(type="search", query=query),
+                    TaskAction(type="play", query=query)
+                ],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Search YouTube and play '{query}' in {browser}",
+                    tool_name="app_control",
+                    action="play_media",
+                    parameters={"query": query, "browser": browser, "service": service},
+                    expected_outcome=f"Playing '{query}' on YouTube in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="media_playback",
+                requires_tools=True,
+                summary=f"Searching YouTube for '{query}' and playing top result in {browser}.",
+                steps=steps,
+                verification_criteria="YouTube playback initiated in browser.",
+                task_object=task_obj
+            )
+
+        # 0.3. YouTube Search without Autoplay (e.g. "open youtube and search for rajasthani songs")
+        if "youtube" in g_lower and any(w in ("search", "find", "look up") for w in words) and not is_play_request:
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            m_search = re.search(r'(?:search for|find|look up)\s+([^,\.\n]+?)(?:\s+on\s+youtube|\s+site|\s*$)', g_lower)
+            query = m_search.group(1).strip() if m_search else "search"
+            url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
+            task_obj = TaskObject(
+                intent="search",
+                target="YouTube",
+                actions=[
+                    TaskAction(type="open_service", target="YouTube"),
+                    TaskAction(type="search", query=query, parameters={"url": url})
+                ],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open YouTube search results for '{query}' in {browser}",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": url, "browser": browser},
+                    expected_outcome=f"YouTube search results for '{query}' loaded in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="browser_url",
+                requires_tools=True,
+                summary=f"Searching YouTube for '{query}' in {browser}.",
+                steps=steps,
+                verification_criteria=f"Opened YouTube search for '{query}'.",
+                task_object=task_obj
+            )
+
+        # 0.35. General Web Search (e.g. "search telegram in safari", "search for X on google", "in safari search telegram")
+        is_search_intent = (first_word in ("search", "google") or "search " in g_lower or "google " in g_lower) and not ("youtube" in g_lower and any(w in words for w in ("search", "find", "look")))
+        if is_search_intent and not is_play_request:
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            matches = re.findall(r'search\s+(?:for\s+)?([a-zA-Z0-9_\s]+?)(?:\s+(?:in|on)\s+(?:safari|chrome|google|browser|the web|web)|\s*$)', g_lower)
+            query = "web"
+            if matches:
+                candidates = [m.strip() for m in matches if m.strip() and m.strip() not in ("safari", "chrome", "google", "browser")]
+                query = candidates[-1] if candidates else matches[0].strip()
+            query = re.sub(r'\s+(?:in|on)\s+(?:safari|chrome|google|browser)$', '', query).strip()
+            if not query or query in ("safari", "chrome", "browser"):
+                query = "web"
+
+            url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+            task_obj = TaskObject(
+                intent="web_search",
+                target=query,
+                actions=[
+                    TaskAction(type="open_service", target="Google"),
+                    TaskAction(type="search", query=query, parameters={"url": url, "browser": browser})
+                ],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Search Google for '{query}' in {browser}",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": url, "browser": browser},
+                    expected_outcome=f"Google search results for '{query}' loaded in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="browser_url",
+                requires_tools=True,
+                summary=f"Searching Google for '{query}' in {browser}.",
+                steps=steps,
+                verification_criteria=f"Google search for '{query}' opened in {browser}.",
+                task_object=task_obj
+            )
+
+        # 0.36. Open Website / Web Service in Specific Browser (e.g. "open telegram in safari", "open whatsapp in chrome")
+        m_in_browser = re.search(r'(?:open|launch|go to)\s+(.+?)\s+(?:in|on)\s+(safari|chrome|google chrome|browser)', g_lower)
+        if m_in_browser and not is_play_request:
+            raw_target = m_in_browser.group(1).strip()
+            req_browser = m_in_browser.group(2).strip()
+            browser = "Google Chrome" if "chrome" in req_browser else "Safari"
+            clean_target = re.sub(r'^(?:the|web)\s+', '', raw_target).strip()
+
+            KNOWN_WEB_SERVICES = {
+                "telegram": "https://web.telegram.org",
+                "whatsapp": "https://web.whatsapp.com",
+                "youtube": "https://www.youtube.com",
+                "google": "https://www.google.com",
+                "github": "https://github.com",
+                "twitter": "https://x.com",
+                "x": "https://x.com",
+                "reddit": "https://www.reddit.com",
+                "chatgpt": "https://chatgpt.com",
+                "gmail": "https://mail.google.com",
+                "netflix": "https://www.netflix.com",
+                "instagram": "https://www.instagram.com",
+                "linkedin": "https://www.linkedin.com",
+                "facebook": "https://www.facebook.com",
+                "discord": "https://discord.com/app",
+                "amazon": "https://www.amazon.com",
+                "wikipedia": "https://www.wikipedia.org"
+            }
+
+            if clean_target in KNOWN_WEB_SERVICES:
+                url = KNOWN_WEB_SERVICES[clean_target]
+            elif any(clean_target.endswith(tld) for tld in (".com", ".org", ".io", ".net", ".edu", ".gov", ".co")):
+                url = clean_target if clean_target.startswith("http") else f"https://{clean_target}"
+            else:
+                url = f"https://www.google.com/search?q={urllib.parse.quote(clean_target)}"
+
+            task_obj = TaskObject(
+                intent="browser_url",
+                target=clean_target,
+                actions=[TaskAction(type="open_url", target=url, parameters={"url": url, "browser": browser})],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open {clean_target.capitalize()} ({url}) in {browser}",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": url, "browser": browser},
+                    expected_outcome=f"Opened {url} in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="browser_url",
+                requires_tools=True,
+                summary=f"Opening {clean_target.capitalize()} in {browser}.",
+                steps=steps,
+                verification_criteria=f"Opened {clean_target.capitalize()} in {browser}.",
+                task_object=task_obj
+            )
+
+        # 0.4. Open Website / YouTube / URL without extra actions (e.g. "open youtube", "open safari", "open google")
+        if "youtube" in g_lower and not is_play_request:
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            url = "https://www.youtube.com"
+            task_obj = TaskObject(
+                intent="open_service",
+                target="YouTube",
+                actions=[TaskAction(type="open_service", target="YouTube", parameters={"url": url, "browser": browser})],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open YouTube ({url}) in {browser}",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": url, "browser": browser},
+                    expected_outcome=f"Opened YouTube in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="browser_url",
+                requires_tools=True,
+                summary=f"Opening YouTube homepage in {browser}.",
+                steps=steps,
+                verification_criteria=f"YouTube homepage opened in {browser}.",
+                task_object=task_obj
+            )
+
+        # 0.5. Browser New Tab (open chrome new tab, safari new tab)
+        if "new tab" in g_lower or ("tab" in words and any(w in ("open", "new", "create") for w in words)):
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            task_obj = TaskObject(
+                intent="browser_control",
+                target=browser,
+                actions=[TaskAction(type="open_new_tab", target=browser)],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open new tab in {browser}",
+                    tool_name="app_control",
+                    action="open_new_tab",
+                    parameters={"browser": browser, "url": ""},
+                    expected_outcome=f"New tab opened in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="browser_control",
+                requires_tools=True,
+                summary=f"Opening a new tab in {browser}.",
+                steps=steps,
+                verification_criteria=f"New tab launched in {browser}.",
+                task_object=task_obj
+            )
+
+        # 0.6. Open Project (e.g. "open my ResumeIQ project", "open project ResumeIQ")
+        if "project" in g_lower and any(w in ("open", "switch", "launch") for w in words):
+            proj_name = "project"
+            m_proj = re.search(r'(?:open\s+(?:my\s+)?|switch\s+to\s+(?:my\s+)?)?([a-zA-Z0-9_\-]+)\s+project', actual_goal, re.IGNORECASE)
+            if m_proj and m_proj.group(1).lower() not in ("the", "a", "my"):
+                proj_name = m_proj.group(1).strip()
+            else:
+                m_proj2 = re.search(r'project\s+([a-zA-Z0-9_\-]+)', actual_goal, re.IGNORECASE)
+                if m_proj2:
+                    proj_name = m_proj2.group(1).strip()
+                else:
+                    proj_name = "ResumeIQ" if "resumeiq" in g_lower else "workspace"
+            if proj_name.lower() == "resumeiq":
+                proj_name = "ResumeIQ"
+
+            task_obj = TaskObject(
+                intent="open_project",
+                target=proj_name,
+                actions=[TaskAction(type="open_project", target=proj_name, parameters={"project_name": proj_name, "editor": "Visual Studio Code"})],
+                dependencies=[TaskDependency(type="application_installed", name="Visual Studio Code")],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Locate and open '{proj_name}' project in Visual Studio Code",
+                    tool_name="app_control",
+                    action="open_project",
+                    parameters={"project_name": proj_name, "editor": "Visual Studio Code"},
+                    expected_outcome=f"Project '{proj_name}' opened in Visual Studio Code",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="project_open",
+                requires_tools=True,
+                summary=f"Locating and opening project '{proj_name}' in Visual Studio Code.",
+                steps=steps,
+                verification_criteria=f"Project '{proj_name}' opened in editor.",
+                task_object=task_obj
+            )
+
+        # 0.7. App Store / Download from Store (e.g. "open the app store", "open app store and download whatsapp")
+        if "app store" in g_lower or "appstore" in g_lower or ("store" in words and any(w in ("app", "download", "install", "get") for w in words)):
+            app_to_download = None
+            m_dl = re.search(r'(?:download|install|find|search for|get)\s+(?:the\s+)?([a-zA-Z0-9_\s]+)', g_lower)
+            if m_dl:
+                cand = m_dl.group(1).strip()
+                if cand not in ("any app", "an app", "apps", "app", "application", "something", "anything"):
+                    clean_cand = cand.split(" and ")[0].split(" then ")[0].strip().title()
+                    if clean_cand and clean_cand.lower() not in ("any app", "an app", "app"):
+                        app_to_download = clean_cand
+
+            if app_to_download:
+                task_obj = TaskObject(
+                    intent="open_app_store",
+                    target=app_to_download,
+                    actions=[TaskAction(type="open_app_store", target=app_to_download, parameters={"app_name": app_to_download})],
+                    status="pending"
+                )
+                steps = [
+                    PlanStep(
+                        step_id=1,
+                        title=f"Open Mac App Store page for '{app_to_download}'",
+                        tool_name="app_control",
+                        action="open_app_store",
+                        parameters={"app_name": app_to_download},
+                        expected_outcome=f"Mac App Store navigated to '{app_to_download}'",
+                        risk_level=1
+                    )
+                ]
+                return PlanResult(
+                    goal=actual_goal,
+                    intent="open_app_store",
+                    requires_tools=True,
+                    summary=f"Opening Mac App Store page for '{app_to_download}'.",
+                    steps=steps,
+                    verification_criteria=f"App Store navigated to '{app_to_download}'.",
+                    task_object=task_obj
+                )
+            else:
+                task_obj = TaskObject(
+                    intent="open_application",
+                    target="App Store",
+                    actions=[TaskAction(type="open_app", target="App Store", parameters={"app_name": "App Store"})],
+                    status="pending"
+                )
+                steps = [
+                    PlanStep(
+                        step_id=1,
+                        title="Launch App Store",
+                        tool_name="app_control",
+                        action="open_app",
+                        parameters={"app_name": "App Store"},
+                        expected_outcome="App Store opened",
+                        risk_level=1
+                    )
+                ]
+                return PlanResult(
+                    goal=actual_goal,
+                    intent="app_control",
+                    requires_tools=True,
+                    summary="Launching Mac App Store.",
+                    steps=steps,
+                    verification_criteria="App Store running.",
+                    task_object=task_obj
+                )
+
+        # 1. App Control (open application, launch app, close app)
+        is_close = any(w in ("close", "quit", "exit", "terminate", "kill", "stop") for w in words)
+        is_open = any(w in ("open", "launch", "start") for w in words)
+
+        if (is_open or is_close) and not any(w in g_lower for w in ("project file", "issue", "meeting", "calendar", "mail to", "message to")):
+            target = None
+            from backend.tools.app_control import AppControlTool
+            sorted_apps = sorted(AppControlTool.COMMON_APP_MAP.keys(), key=lambda k: len(k), reverse=True)
+            for cand in sorted_apps:
+                if cand in g_lower:
+                    target = AppControlTool.COMMON_APP_MAP[cand]
+                    break
+
+            # If explicit name given after open/launch/close/quit
+            if not target:
+                for i, w in enumerate(words):
+                    if w in ("open", "launch", "start", "close", "quit") and i + 1 < len(words):
+                        idx = i + 1
+                        while idx < len(words) and words[idx] in ("the", "a", "an", "app", "application"):
+                            idx += 1
+                        if idx < len(words) and words[idx] not in ("app", "application", "something", "anything"):
+                            target = words[idx].capitalize()
+                            break
+
+            if not target:
+                target = "Safari"
+
+            # If user specified a website or URL in the app (e.g. open google.com)
+            if any(k in g_lower for k in ("http", ".com", ".org", ".io", ".net", "site")):
+                m_url = re.search(r'(https?://[^\s]+|[a-zA-Z0-9_-]+\.(?:com|org|io|net))', actual_goal)
+                url = m_url.group(0) if m_url else "https://google.com"
+                if not url.startswith("http"):
+                    url = f"https://{url}"
+                task_obj = TaskObject(
+                    intent="browser_url",
+                    target=url,
+                    actions=[TaskAction(type="open_url", target=url, parameters={"url": url, "browser": target})],
+                    status="pending"
+                )
+                steps = [
+                    PlanStep(
+                        step_id=1,
+                        title=f"Open {url} in {target}",
+                        tool_name="app_control",
+                        action="open_url",
+                        parameters={"url": url, "browser": target},
+                        expected_outcome=f"Opened {url} in {target}",
+                        risk_level=1
+                    )
+                ]
+                return PlanResult(
+                    goal=actual_goal,
+                    intent="browser_url",
+                    requires_tools=True,
+                    summary=f"Navigating to {url} in {target}.",
+                    steps=steps,
+                    verification_criteria=f"Opened {url} in {target}.",
+                    task_object=task_obj
+                )
+
+            action = "close_app" if is_close and not is_open else "open_app"
+            task_obj = TaskObject(
+                intent="close_application" if action == "close_app" else "open_application",
+                target=target,
+                actions=[TaskAction(type=action, target=target, parameters={"app_name": target})],
+                dependencies=[TaskDependency(type="application_installed", name=target)],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"{'Close' if action == 'close_app' else 'Launch'} {target}",
+                    tool_name="app_control",
+                    action=action,
+                    parameters={"app_name": target},
+                    expected_outcome=f"Application {target} {'closed' if action == 'close_app' else 'launched'}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="app_control",
+                requires_tools=True,
+                summary=f"Managing macOS application: {target}.",
+                steps=steps,
+                verification_criteria=f"Application {target} state updated.",
+                task_object=task_obj
+            )
+
+        # 2. Meeting & Calendar Scheduling
+        if any(w in ("meeting", "schedule", "calendar", "appointment") for w in words) or "fix a meeting" in g_lower:
+            date_val = "Tomorrow"
+            time_val = "10:00 AM"
+            if "tomorrow" in g_lower:
+                date_val = "Tomorrow"
+            elif "today" in g_lower:
+                date_val = "Today"
+            elif "next week" in g_lower:
+                date_val = "Next Week"
+            
+            time_match = re.search(r'\b(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b', g_lower)
+            if time_match:
+                time_val = time_match.group(1).upper()
+
+            task_obj = TaskObject(
+                intent="create_meeting",
+                target=actual_goal,
+                actions=[TaskAction(type="create_meeting", parameters={"title": actual_goal, "date": date_val, "time": time_val})],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Generate meeting credentials and schedule calendar event",
+                    tool_name="meeting_scheduler",
+                    action="create_meeting",
+                    parameters={"title": actual_goal, "date": date_val, "time": time_val, "duration_minutes": 30},
+                    expected_outcome="Meeting ID and Google Meet link generated and added to macOS Calendar",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="meeting_scheduling",
+                requires_tools=True,
+                summary="Scheduling meeting, generating meeting ID and URL, and updating calendar.",
+                steps=steps,
+                verification_criteria="Meeting link generated and calendar event created.",
+                task_object=task_obj
+            )
+
+        # 3. Timer & Alarms
+        if any(w in ("timer", "alarm", "countdown") for w in words):
+            minutes_val = 10
+            min_match = re.search(r'(\d+)\s*(?:min|minute)', g_lower)
+            sec_match = re.search(r'(\d+)\s*(?:sec|second)', g_lower)
+            if min_match:
+                minutes_val = int(min_match.group(1))
+            elif sec_match:
+                minutes_val = max(1, int(sec_match.group(1)) // 60)
+
+            task_obj = TaskObject(
+                intent="set_timer",
+                target=f"{minutes_val} minutes",
+                actions=[TaskAction(type="set_timer", parameters={"minutes": minutes_val, "label": actual_goal})],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Set system timer",
+                    tool_name="meeting_scheduler",
+                    action="set_timer",
+                    parameters={"minutes": minutes_val, "label": actual_goal},
+                    expected_outcome="Timer initialized and system alert scheduled",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="timer",
+                requires_tools=True,
+                summary=f"Setting {minutes_val}-minute countdown timer on macOS.",
+                steps=steps,
+                verification_criteria="Timer running in scheduler.",
+                task_object=task_obj
+            )
+
+        # 4. Communication (Email & Message)
+        if any(w in ("email", "mail", "message", "sms", "text", "imessage") for w in words) or (words and words[0] == "send"):
+            is_email = any(w in ("email", "mail") for w in words)
+            action = "send_email" if is_email else "send_message"
+            
+            to_val = ctx_chat or (ctx_people[0] if ctx_people else "recipient@example.com")
+            email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', g_lower)
+            if email_match:
+                to_val = email_match.group(0)
+            elif " to " in g_lower:
+                after_to = g_lower.split(" to ")[1].split()[0]
+                to_val = after_to
+            else:
+                m_send = re.search(r'send\s+([A-Za-z0-9_\s]+?)(?:\s+(?:that|about|saying|message)|$)', actual_goal, re.IGNORECASE)
+                if m_send and m_send.group(1).lower() not in ("a", "the", "this", "her", "him", "them"):
+                    to_val = m_send.group(1).strip()
+
+            subject_val = "Notification from JARVIS"
+            subj_match = re.search(r'subject\s+([^,]+)', actual_goal, re.IGNORECASE)
+            if subj_match:
+                subject_val = subj_match.group(1).strip()
+
+            params = {
+                "to": to_val,
+                "subject": subject_val,
+                "body": actual_goal,
+                "message": actual_goal
+            }
+            task_obj = TaskObject(
+                intent=action,
+                target=to_val,
+                actions=[TaskAction(type=action, target=to_val, parameters=params)],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Prepare and dispatch {'email' if action == 'send_email' else 'message'}",
+                    tool_name="communication",
+                    action=action,
+                    parameters=params,
+                    expected_outcome=f"{'Email' if action == 'send_email' else 'Message'} prepared and opened in macOS client",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="communication",
+                requires_tools=True,
+                summary=f"Dispatching {'email' if action == 'send_email' else 'message'} via macOS client.",
+                steps=steps,
+                verification_criteria="Client opened with draft/message.",
+                task_object=task_obj
+            )
+
+
+        # 5. Project Creation / Coding Request
+        if any(w in g_lower for w in ("create", "react", "app", "nova", "build", "frontend")):
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Inspect workspace directory",
+                    tool_name="filesystem",
+                    action="list_dir",
+                    parameters={"path": "."},
+                    expected_outcome="Directory contents retrieved",
+                    risk_level=0
+                ),
+                PlanStep(
+                    step_id=2,
+                    title="Create application structure",
+                    tool_name="filesystem",
+                    action="write_file",
+                    parameters={"path": "nova_app.json", "content": json.dumps({"name": "Nova", "version": "1.0.0", "status": "active"})},
+                    expected_outcome="File nova_app.json written to disk",
+                    risk_level=1
+                ),
+                PlanStep(
+                    step_id=3,
+                    title="Verify project status",
+                    tool_name="filesystem",
+                    action="file_info",
+                    parameters={"path": "nova_app.json"},
+                    expected_outcome="Confirmed file exists with valid byte size",
+                    risk_level=0
+                )
+            ]
+            return PlanResult(
+                goal=goal,
+                intent="coding_task",
+                requires_tools=True,
+                summary="Plan formulated to inspect workspace, create project files, and verify output receipt.",
+                steps=steps,
+                verification_criteria="Project file verified on disk."
+            )
+
+        # 6. Terminal / Test execution
+        if any(w in g_lower for w in ("test", "run", "lint", "check")):
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Run test suite command",
+                    tool_name="terminal",
+                    action="run_command",
+                    parameters={"command": "echo 'JARVIS local tests: ALL PASS'"},
+                    expected_outcome="Exit code 0 and pass indicator",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=goal,
+                intent="terminal_execution",
+                requires_tools=True,
+                summary="Executing test command in controlled subprocess.",
+                steps=steps,
+                verification_criteria="Exit code 0"
+            )
+
+        # 7. Screen Vision
+        if any(w in g_lower for w in ("screen", "looking at", "what do you see", "vision")):
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Capture live screen frame",
+                    tool_name="screen",
+                    action="execute",
+                    parameters={},
+                    expected_outcome="Live frame captured as base64 image",
+                    risk_level=0
+                )
+            ]
+            return PlanResult(
+                goal=goal,
+                intent="screen_query",
+                requires_tools=True,
+                summary="Capturing current display frame for visual telemetry.",
+                steps=steps,
+                verification_criteria="Non-empty base64 image received."
+            )
+
+        # 8. System Info Query
+        if any(w in g_lower for w in ("system", "specs", "hardware", "diagnostic")):
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Retrieve system architecture telemetry",
+                    tool_name="system_info",
+                    action="execute",
+                    parameters={},
+                    expected_outcome="System telemetry retrieved",
+                    risk_level=0
+                )
+            ]
+            return PlanResult(
+                goal=goal,
+                intent="system_info",
+                requires_tools=True,
+                summary="Querying host system specifications and installed CLI tools.",
+                steps=steps,
+                verification_criteria="System metrics populated."
+            )
+
+        # 9. Workspace Filesystem Listing
+        if any(w in g_lower for w in ("list files", "show files", "directory", "ls", "what files")):
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="List directory contents",
+                    tool_name="filesystem",
+                    action="list_dir",
+                    parameters={"path": "."},
+                    expected_outcome="Directory contents retrieved",
+                    risk_level=0
+                )
+            ]
+            return PlanResult(
+                goal=goal,
+                intent="filesystem_inspection",
+                requires_tools=True,
+                summary="Inspecting workspace files.",
+                steps=steps,
+                verification_criteria="Files retrieved."
+            )
+
+
+
+
+        # Default conversational / informational plan
+        return PlanResult(
+            goal=goal,
+            intent="conversation",
+            requires_tools=False,
+            summary="Direct response without external tool execution.",
+            steps=[],
+            verification_criteria="Response rendered."
+        )
+
+    async def generate_structured(
+        self,
+        prompt: str,
+        schema_class: Type[BaseModel],
+        system_instruction: Optional[str] = None
+    ) -> BaseModel:
+        # If schema is PlanResult, invoke plan()
+        if schema_class == PlanResult:
+            return await self.plan(prompt)
+
+        # Provide a synthetic instance
+        fields = schema_class.model_fields
+        synth = {}
+        for fname, finfo in fields.items():
+            if finfo.annotation in (int, Optional[int]):
+                synth[fname] = 1
+            elif finfo.annotation in (bool, Optional[bool]):
+                synth[fname] = True
+            elif finfo.annotation in (float, Optional[float]):
+                synth[fname] = 1.0
+            elif finfo.annotation in (list, List[str]):
+                synth[fname] = ["verified"]
+            elif finfo.annotation in (dict, Dict[str, Any]):
+                synth[fname] = {"status": "ok"}
+            else:
+                synth[fname] = f"Mock {fname}"
+        return schema_class.model_validate(synth)
+
+    async def analyze(
+        self,
+        content: str,
+        instruction: str,
+        is_untrusted: bool = True,
+        image_base64: Optional[str] = None
+    ) -> str:
+        if image_base64:
+            return (
+                "Sir, I have analyzed your live screen capture. "
+                "I observe your active desktop workspace running developer tooling and the JARVIS command console. "
+                "Visual telemetry is sharp and clear."
+            )
+        return f"Analysis complete, Sir. Key takeaway regarding '{instruction}': {content[:100]}..."
