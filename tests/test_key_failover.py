@@ -35,3 +35,8 @@ def test_gemini_provider_rotation():
     assert p.api_key == "keyA"
 
 
+def test_gemini_upstream_error_detection():
+    assert GeminiProvider._is_upstream_temporary_error("429 RESOURCE_EXHAUSTED: quota exceeded")
+    assert GeminiProvider._is_upstream_temporary_error("503 UNAVAILABLE: high demand")
+    assert GeminiProvider._is_upstream_temporary_error("500 INTERNAL server error")
+    assert not GeminiProvider._is_upstream_temporary_error("Invalid argument: missing prompt")

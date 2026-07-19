@@ -59,3 +59,25 @@ async def test_mock_provider_structured_output():
 
 
 @pytest.mark.asyncio
+async def test_mock_provider_analysis():
+    provider = MockProvider()
+    analysis = await provider.analyze(
+        content="System metrics: CPU 12%, Memory 4GB free",
+        instruction="Summarize CPU utilization"
+    )
+    assert len(analysis) > 0
+
+
+def test_gemini_provider_unconfigured_detection():
+    # Test when API key is empty or placeholder
+    provider = GeminiProvider(api_key="", model_name="gemini-2.5-flash")
+    assert not provider.is_configured()
+    assert provider.get_model_name() == "gemini-2.5-flash"
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_unconfigured_raises_cleanly():
+    provider = GeminiProvider(api_key="", model_name="gemini-2.5-flash")
+    with pytest.raises(RuntimeError) as exc_info:
+        await provider.chat([{"role": "user", "content": "ping"}])
+    assert "not configured" in str(exc_info.value).lower()
