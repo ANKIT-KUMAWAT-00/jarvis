@@ -4,3 +4,6 @@ Specialized for macOS Apple Silicon detection, runtime environments, and install
 """
 
 import os
+import platform
+import shutil
+import subprocess
