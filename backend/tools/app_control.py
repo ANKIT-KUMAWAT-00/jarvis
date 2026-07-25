@@ -6,3 +6,6 @@ opening macOS System Settings privacy panes, and controlling web URLs without ha
 
 import asyncio
 import subprocess
+import json
+import os
+import shutil
