@@ -5,3 +5,6 @@ in PromptInjectionGuard untrusted data boundaries.
 """
 
 import time
+import re
+import urllib.request
+import urllib.parse
