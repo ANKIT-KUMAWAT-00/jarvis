@@ -6,3 +6,4 @@ and logs structured receipts into the audit trail.
 
 from typing import Dict, Any, List, Optional
 from .base import Tool, ToolResult, VerificationResult
+from backend.security.permissions import PermissionEngine, ActionLevel, ConfirmationToken
