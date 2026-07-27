@@ -8,3 +8,6 @@ import os
 import time
 import subprocess
 from pathlib import Path
+from typing import Dict, Any, Optional
+import requests
+from .base import Tool, ToolResult, VerificationResult
