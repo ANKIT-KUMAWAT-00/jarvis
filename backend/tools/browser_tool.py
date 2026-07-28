@@ -8,3 +8,5 @@ import time
 import re
 import urllib.request
 import urllib.parse
+from typing import Dict, Any, Optional
+from .base import Tool, ToolResult, VerificationResult
