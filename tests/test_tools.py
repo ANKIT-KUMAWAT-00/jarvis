@@ -47,3 +47,39 @@ async def test_filesystem_tool_lifecycle(temp_workspace):
 
 
 @pytest.mark.asyncio
+async def test_terminal_tool_execution(temp_workspace):
+    tool = TerminalTool(temp_workspace)
+
+    res = await tool.execute({"command": "echo 'TEST_OK'", "timeout": 5.0})
+    assert res.success is True
+    assert "TEST_OK" in res.output
+
+    v_res = tool.verify(res, {"expected_exit_code": 0, "output_contains": "TEST_OK"})
+    assert v_res.verified is True
+
+
+@pytest.mark.asyncio
+async def test_terminal_tool_blocks_destructive_command(temp_workspace):
+    tool = TerminalTool(temp_workspace)
+    res = await tool.execute({"command": "rm -rf /"})
+    assert res.success is False
+    assert "Security Intercept" in res.error
+
+
+@pytest.mark.asyncio
+async def test_system_info_tool():
+    tool = SystemInfoTool()
+    res = await tool.execute({})
+    assert res.success is True
+    assert "os" in res.output
+    assert "tools" in res.output
+    assert res.raw_data.get("architecture") in ("arm64", "x86_64")
+
+
+@pytest.mark.asyncio
+async def test_browser_tool_wrapping():
+    tool = BrowserTool()
+    # Test safe handling when given an invalid or local test URL
+    res = await tool.execute({"url": "http://127.0.0.1:9999/nonexistent"})
+    # Either connection error or response, error handling must be clean and not crash
+    assert isinstance(res.success, bool)
