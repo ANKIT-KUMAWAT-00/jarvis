@@ -4,3 +4,4 @@ Extracts goals, target applications, entities, and actions from natural language
 resolving pronouns and conversational references.
 """
 
+import re
