@@ -4,3 +4,4 @@ Decodes user goals into structured action hierarchies with verification constrai
 """
 
 import re
+from typing import Dict, Any, Optional
