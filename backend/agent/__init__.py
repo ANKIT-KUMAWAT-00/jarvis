@@ -4,3 +4,4 @@ Exports JarvisAgent, Planner, IntentClassifier, VerificationEngine, and SelfRepa
 """
 
 from .core import JarvisAgent
+from .planner import Planner, IntentClassifier
