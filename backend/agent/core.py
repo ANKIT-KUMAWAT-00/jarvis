@@ -12,3 +12,8 @@ from backend.config import JarvisConfig
 from backend.providers.base import LLMProvider, PlanResult, PlanStep
 from backend.tools.registry import ToolRegistry
 from backend.tools.base import ToolResult, VerificationResult
+from backend.tools.app_control import AppControlTool
+from backend.memory.store import MemoryStore, MemoryItem
+from backend.memory.search import MemoryRetriever
+from backend.security.permissions import ActionLevel, ConfirmationToken
+from .planner import IntentClassifier, Planner
