@@ -8,3 +8,5 @@ import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
