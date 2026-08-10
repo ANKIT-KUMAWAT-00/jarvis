@@ -6,3 +6,6 @@ within strict retry bounds.
 
 from typing import Dict, Any, Optional
 from backend.providers.base import LLMProvider, PlanStep
+from backend.tools.base import ToolResult
+
+
