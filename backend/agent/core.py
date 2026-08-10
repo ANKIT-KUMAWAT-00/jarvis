@@ -17,3 +17,8 @@ from backend.memory.store import MemoryStore, MemoryItem
 from backend.memory.search import MemoryRetriever
 from backend.security.permissions import ActionLevel, ConfirmationToken
 from .planner import IntentClassifier, Planner
+from .verification import VerificationEngine
+from .self_repair import SelfRepairEngine
+from backend.context.context_manager import ContextManager, EntityReference
+from backend.capabilities.registry import CapabilityRegistry
+from backend.observer.environment_observer import EnvironmentObserver
