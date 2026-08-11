@@ -6,3 +6,12 @@ Exports JarvisAgent, Planner, IntentClassifier, VerificationEngine, and SelfRepa
 from .core import JarvisAgent
 from .planner import Planner, IntentClassifier
 from .verification import VerificationEngine
+from .self_repair import SelfRepairEngine
+
+__all__ = [
+    "JarvisAgent",
+    "Planner",
+    "IntentClassifier",
+    "VerificationEngine",
+    "SelfRepairEngine",
+]
