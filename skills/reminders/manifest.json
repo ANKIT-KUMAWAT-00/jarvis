@@ -1,0 +1,10 @@
+{
+  "name": "reminders",
+  "version": "1.0.0",
+  "description": "Background task queue, delayed reminders, and recurring task scheduling.",
+  "author": "JARVIS Core",
+  "capabilities": ["schedule_reminder", "list_tasks", "cancel_task"],
+  "required_tools": [],
+  "permissions_required": [1],
+  "is_enabled": true
+}
