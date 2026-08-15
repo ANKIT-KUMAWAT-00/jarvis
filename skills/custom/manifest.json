@@ -1,0 +1,10 @@
+{
+  "name": "custom_extension",
+  "version": "1.0.0",
+  "description": "Template for user-defined custom skills, smart-home hooks, or specialized workflows.",
+  "author": "User / Developer",
+  "capabilities": ["custom_action"],
+  "required_tools": [],
+  "permissions_required": [1],
+  "is_enabled": true
+}
