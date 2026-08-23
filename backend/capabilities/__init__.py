@@ -1,0 +1,4 @@
+"""
+JARVIS Application Capability Registry
+"""
+
