@@ -7,3 +7,6 @@ without relying on brittle screen coordinates.
 
 import asyncio
 import os
+import json
+import logging
+from typing import Dict, Any, List, Optional
