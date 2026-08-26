@@ -6,3 +6,7 @@ Fallback mechanism when Accessibility tree or DOM selectors are insufficient
 
 import asyncio
 import os
+import base64
+import time
+import logging
+from pathlib import Path
