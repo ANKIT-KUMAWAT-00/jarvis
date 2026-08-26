@@ -6,3 +6,6 @@ and dynamic fallback routing (Native -> AppleScript -> Accessibility -> Browser 
 
 import os
 import subprocess
+import urllib.parse
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
