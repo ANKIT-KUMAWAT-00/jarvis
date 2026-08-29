@@ -240,3 +240,203 @@ async def test_app_store_approval_with_go_for_it(agent):
 
 
 @pytest.mark.asyncio
+async def test_play_music_in_youtube_execution(agent):
+    """'Play a music in YouTube' must execute play_media with query 'music'."""
+    res = await agent.run("Play a music in YouTube")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "play_media"
+    assert step["parameters"]["query"].lower() == "music"
+
+
+@pytest.mark.asyncio
+async def test_play_artist_or_song_directly(agent):
+    """'play Vishal' must execute play_media with query 'vishal'."""
+    res = await agent.run("play Vishal")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["action"] == "play_media"
+    assert step["parameters"]["query"].lower() == "vishal"
+
+
+@pytest.mark.asyncio
+async def test_unfulfilled_task_re_execution_on_criticism(agent):
+    """When user says 'Bro you haven't done any task', re-execute the preceding command."""
+    await agent.run("Play a music in YouTube")
+    res = await agent.run("Bro you haven't done any task")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    assert agent.recent_task_records[-1]["goal"] == "Play a music in YouTube"
+
+
+@pytest.mark.asyncio
+async def test_media_followup_artist_name(agent):
+    """When user types artist name 'Vishal' after media context, execute play_media for 'Vishal'."""
+    await agent.run("Play a music in YouTube")
+    res = await agent.run("Vishal")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    assert last_task["goal"] == "Play Vishal on YouTube"
+    assert last_task["steps"][0]["parameters"]["query"].lower() == "vishal"
+
+
+@pytest.mark.asyncio
+async def test_open_telegram_in_safari(agent):
+    """'Jarvis open telegram in Safari' must open web.telegram.org in Safari, never YouTube."""
+    res = await agent.run("Jarvis open telegram in Safari")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "open_url"
+    assert "web.telegram.org" in step["parameters"]["url"]
+    assert step["parameters"]["browser"] == "Safari"
+
+
+@pytest.mark.asyncio
+async def test_search_telegram_in_safari(agent):
+    """'search telegram in safari' must search Google for telegram in Safari."""
+    res = await agent.run("search telegram in safari")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "open_url"
+    assert "google.com/search" in step["parameters"]["url"]
+    assert "telegram" in step["parameters"]["url"]
+    assert step["parameters"]["browser"] == "Safari"
+
+
+@pytest.mark.asyncio
+async def test_no_media_hijack_after_music(agent):
+    """After playing music, 'Open telegram in Safari' must open Telegram, not play on YouTube."""
+    await agent.run("Play a music in YouTube")
+    res = await agent.run("Open telegram in Safari")
+    assert res["state"] == "COMPLETED"
+    last_task = agent.recent_task_records[-1]
+    assert last_task["steps"][0]["action"] == "open_url"
+    assert "telegram" in last_task["steps"][0]["parameters"]["url"]
+    assert "youtube" not in last_task["steps"][0]["parameters"]["url"]
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_archived_chats_navigation(agent):
+    """'in my whatsapp go to archived chats' must navigate to archived chats via interact_web."""
+    res = await agent.run("in my whatsapp go to archived chats")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    assert "cannot directly navigate" not in res["response"].lower()
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "interact_web"
+    assert step["parameters"]["service"] == "whatsapp"
+    assert step["parameters"]["target"] == "archived"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_unread_chats_filter(agent):
+    """'in whatsapp show unread chats' must filter unread chats via interact_web."""
+    res = await agent.run("in whatsapp show unread chats")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "interact_web"
+    assert step["parameters"]["service"] == "whatsapp"
+    assert step["parameters"]["target"] == "unread"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_search_chat(agent):
+    """'search for Rohit in whatsapp' must search WhatsApp via interact_web."""
+    res = await agent.run("search for Rohit in whatsapp")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "interact_web"
+    assert step["parameters"]["service"] == "whatsapp"
+    assert step["parameters"]["target"] == "search"
+    assert "rohit" in step["parameters"]["query"].lower()
+
+
+@pytest.mark.asyncio
+async def test_browser_click_element(agent):
+    """'click settings in safari' must click settings via interact_web."""
+    res = await agent.run("click settings in safari")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "interact_web"
+    assert step["parameters"]["action_type"] == "click"
+    assert step["parameters"]["target"] == "settings"
+
+
+@pytest.mark.asyncio
+async def test_browser_type_text(agent):
+    """'type hello into search in safari' must type hello via interact_web."""
+    res = await agent.run("type hello into search in safari")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "interact_web"
+    assert step["parameters"]["action_type"] == "type"
+    assert step["parameters"]["text"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_permission_detection_safari_developer_not_automation(agent):
+    """Ensure 'Allow JavaScript from Apple Events' maps to safari_developer and never falsely triggers automation pane."""
+    err_text = "Browser requires 'Allow JavaScript from Apple Events' in Google Chrome.\nIn Chrome's top menu bar, click View > Developer > Check 'Allow JavaScript from Apple Events'."
+    detected = agent._detect_permission_requirement(err_text, raw_data={"permission_required": "safari_developer"})
+    assert detected == "safari_developer"
+
+    detected_text = agent._detect_permission_requirement(err_text)
+    assert detected_text == "safari_developer"
+
+
+@pytest.mark.asyncio
+async def test_mac_permission_resumption_with_confirmed(agent):
+    """Saying 'confirmed', 'confirm', or 'i confirmed' must resume a pending MAC_PERMISSION task."""
+    agent.pending_task = {
+        "type": "MAC_PERMISSION",
+        "original_goal": "in my whatsapp go to archived chats",
+        "waiting_for": "permission_grant"
+    }
+    res = await agent.run("confirmed")
+    assert agent.pending_task is None
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_user_criticism_recovers_pending_task(agent):
+    """User reporting that automation tool is opening and not working after confirmation must recover and execute unfulfilled goal."""
+    agent.pending_task = {
+        "type": "MAC_PERMISSION",
+        "original_goal": "in my whatsapp go to archived chats",
+        "waiting_for": "permission_grant"
+    }
+    res = await agent.run("now it is opening the automtion tool but it is not working after confirmation also")
+    assert agent.pending_task is None
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+
+
+
+
