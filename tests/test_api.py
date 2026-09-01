@@ -1,0 +1,15 @@
+"""
+Integration tests for JARVIS FastAPI REST Endpoints.
+"""
+
+import pytest
+from starlette.testclient import TestClient
+from backend.main import app
+
+
+@pytest.fixture
+def client():
+    with TestClient(app) as c:
+        yield c
+
+
