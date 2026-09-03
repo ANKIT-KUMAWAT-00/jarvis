@@ -124,3 +124,129 @@
 
       <!-- Command & Voice Toolbar -->
       <footer class="input-hud" role="region" aria-label="Command Input">
+        <form class="input-form" id="command-form" onsubmit="return false;">
+          
+          <button type="button" class="btn-mic" id="btn-mic" title="Voice Input (Speech-to-Text)" aria-label="Activate voice microphone">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <div class="mic-wave" aria-hidden="true"></div>
+          </button>
+
+          <div class="input-wrapper">
+            <input 
+              type="text" 
+              id="cmd-input" 
+              class="cmd-input" 
+              placeholder="Ask JARVIS, give a task, or say 'Remember that...'" 
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+
+          <button type="submit" class="btn-send" id="btn-send" title="Dispatch Instruction">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+
+          <button type="button" class="btn-stop" id="btn-stop" title="Emergency Stop / Cancel" aria-label="Stop execution">
+            <span class="stop-icon">■</span>
+            <span>STOP</span>
+          </button>
+        </form>
+      </footer>
+    </section>
+
+    <!-- Right Panel: Persistent Memory & System HUD -->
+    <aside class="side-panel memory-panel" aria-label="Memory & Context">
+      <div class="panel-header">
+        <div class="panel-title-wrap">
+          <span class="panel-icon">🧠</span>
+          <h2 class="panel-title">LONG-TERM MEMORY</h2>
+        </div>
+        <button class="pill-btn" id="btn-add-memory" title="Store explicit memory">+ Fact</button>
+      </div>
+
+      <div class="memory-search-bar">
+        <input type="text" id="memory-search-input" placeholder="Search remembered facts..." />
+      </div>
+
+      <div class="memory-list-container" id="memory-list-container">
+        <div class="memory-empty">Loading remembered facts...</div>
+      </div>
+
+      <div class="workspace-info-card">
+        <div class="card-title">ACTIVE WORKSPACE</div>
+        <div class="workspace-path" id="val-workspace">Loading workspace...</div>
+        <div class="workspace-meta">Contains code projects, scratch spaces, and notes.</div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Narrow Confirmation Modal (Level 2 & 3 Protection) -->
+  <div class="modal-backdrop hidden" id="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-card">
+      <div class="modal-badge-row">
+        <span class="risk-badge" id="modal-risk-badge">LEVEL 3 HIGH RISK</span>
+        <span class="token-id" id="modal-token-id">TOKEN: #...</span>
+      </div>
+      <h3 class="modal-title" id="modal-title">Authorization Required</h3>
+      <div class="modal-explanation" id="modal-explanation">
+        Action details will appear here.
+      </div>
+      <div class="modal-target-box">
+        <div class="target-label">TARGET RESOURCE</div>
+        <code class="target-val" id="modal-target-val">./file</code>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn btn-deny" id="btn-modal-deny">Deny Action</button>
+        <button class="modal-btn btn-confirm" id="btn-modal-confirm">Authorize Action</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Interactive Knowledge Graph Modal -->
+  <div class="modal-backdrop hidden" id="graph-modal" role="dialog" aria-modal="true" aria-labelledby="graph-title">
+    <div class="modal-card graph-modal-card">
+      <div class="graph-modal-header">
+        <h3 class="modal-title" id="graph-title">JARVIS Semantic Knowledge Graph</h3>
+        <button class="modal-close" id="btn-graph-close">✕</button>
+      </div>
+      <div class="graph-canvas-wrap">
+        <canvas id="graph-canvas" width="800" height="520"></canvas>
+      </div>
+      <div class="graph-info-banner" id="graph-node-info">
+        Click a node to inspect relationships between projects, notes, and memories.
+      </div>
+    </div>
+  </div>
+
+  <!-- Brain / API Key Configuration Modal -->
+  <div class="modal-backdrop hidden" id="key-modal" role="dialog" aria-modal="true" aria-labelledby="key-modal-title">
+    <div class="modal-card">
+      <div class="modal-badge-row">
+        <span class="risk-badge" style="background: rgba(0, 212, 255, 0.15); color: #00d4ff; border-color: rgba(0, 212, 255, 0.4);">COGNITIVE BRAIN CONFIGURATION</span>
+      </div>
+      <h3 class="modal-title" id="key-modal-title">Configure Google Gemini Intelligence</h3>
+      <div class="modal-explanation">
+        Paste your Google Gemini developer key to unlock full autonomous reasoning, multi-turn dialogue, tool generation, and macOS vision with <code>gemini-2.5-flash</code>.
+        <br><br>
+        <span style="color: var(--text-dim); font-size: 0.8rem;">Get a free API key at <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" style="color: var(--accent-cyan); text-decoration: underline;">aistudio.google.com</a> or set <code>GEMINI_API_KEY</code> in <code>.env</code>.</span>
+      </div>
+      <div class="modal-target-box" style="margin-top: 14px;">
+        <div class="target-label">GEMINI API KEY</div>
+        <input type="password" id="input-gemini-key" placeholder="AIzaSy..." style="width: 100%; background: transparent; border: none; color: #fff; font-family: monospace; font-size: 0.9rem; outline: none; padding: 4px 0;" />
+      </div>
+      <div id="key-status-msg" style="font-size: 13px; margin-top: 10px; display: none;"></div>
+      <div class="modal-actions" style="margin-top: 18px;">
+        <button class="modal-btn btn-deny" id="btn-key-cancel">Cancel</button>
+        <button class="modal-btn btn-confirm" id="btn-key-save">Connect Gemini Brain</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Client JavaScript -->
+  <script src="js/visual_core.js?v=2.2"></script>
+  <script src="js/knowledge_view.js?v=2.2"></script>
+  <script src="js/voice.js?v=2.2"></script>
+  <script src="js/app.js?v=2.2"></script>
+</body>
+</html>
