@@ -129,3 +129,135 @@ class VoiceEngine {
       return;
     }
 
+    this.lastDispatched = finalText;
+    this.lastDispatchedTime = now;
+
+    // Mute mic before sending so JARVIS never listens to his own echo
+    this.pauseListening();
+
+    if (this.onTranscriptReady) {
+      this.onTranscriptReady(finalText);
+    }
+  }
+
+  clearBuffer() {
+    this.bufferText = '';
+    this.currentInterim = '';
+    if (this.finishTimer) {
+      clearTimeout(this.finishTimer);
+      this.finishTimer = null;
+    }
+  }
+
+  pauseListening() {
+    this.isPausedForSpeech = true;
+    this.clearBuffer();
+  }
+
+  resumeListening() {
+    this.isPausedForSpeech = false;
+    this.clearBuffer();
+    if (this.isListening && this.recognition) {
+      try {
+        this.recognition.start();
+      } catch (e) {}
+    }
+  }
+
+  initVoices() {
+    if (!this.synth) return;
+    const selectVoice = () => {
+      const voices = this.synth.getVoices();
+      this.preferredVoice = voices.find(v => 
+        (v.name.includes('Daniel') || v.name.includes('Google UK English Male') || v.name.includes('Oliver') || v.name.includes('Samantha') || v.name.includes('Rishi')) && v.lang.startsWith('en')
+      ) || voices.find(v => v.lang.startsWith('en')) || voices[0];
+    };
+
+    if (this.synth.onvoiceschanged !== undefined) {
+      this.synth.onvoiceschanged = selectVoice;
+    }
+    selectVoice();
+  }
+
+  toggleListening() {
+    if (!this.recognition) return false;
+    if (this.isListening) {
+      this.isListening = false;
+      this.pauseListening();
+      try {
+        this.recognition.stop();
+      } catch (e) {}
+      if (this.onStateChange) this.onStateChange('IDLE');
+      return false;
+    } else {
+      this.stopSpeaking();
+      this.resumeListening();
+      this.isListening = true;
+      try {
+        this.recognition.start();
+        if (this.onStateChange) this.onStateChange('LISTENING');
+        return true;
+      } catch (e) {
+        console.warn('Recognition start exception:', e);
+        return false;
+      }
+    }
+  }
+
+  speak(text) {
+    if (!this.synth || this.isMuted || !text) return;
+    this.stopSpeaking();
+
+    // Clean text of markdown formatting for speech
+    const cleanText = text
+      .replace(/```[\s\S]*?```/g, 'Code block omitted.')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/[#*_~\[\]]/g, '')
+      .replace(/https?:\/\/\S+/g, 'link')
+      .trim();
+
+    if (!cleanText) return;
+
+    // Immediately pause recognition while speaking to prevent mic from hearing speakers
+    this.pauseListening();
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    if (this.preferredVoice) utterance.voice = this.preferredVoice;
+    utterance.rate = 1.05;
+    utterance.pitch = 0.95;
+
+    utterance.onstart = () => {
+      this.isSpeaking = true;
+      if (this.onStateChange) this.onStateChange('SPEAKING');
+    };
+
+    const finishSpeech = () => {
+      this.isSpeaking = false;
+      if (this.onStateChange) this.onStateChange('IDLE');
+      // Buffer of 400ms after speech ends to prevent speaker reverberation
+      setTimeout(() => {
+        if (!this.isSpeaking) {
+          this.resumeListening();
+        }
+      }, 400);
+    };
+
+    utterance.onend = finishSpeech;
+    utterance.onerror = finishSpeech;
+
+    this.synth.speak(utterance);
+  }
+
+  stopSpeaking() {
+    if (this.synth && this.synth.speaking) {
+      this.synth.cancel();
+      this.isSpeaking = false;
+    }
+  }
+
+  toggleMute() {
+    this.isMuted = !this.isMuted;
+    if (this.isMuted) this.stopSpeaking();
+    return this.isMuted;
+  }
+}

@@ -80,3 +80,85 @@ class VisualCore {
         return { primary: '#00f0ff', secondary: '#0070f3', glow: 'rgba(0, 240, 255, 0.25)' };
     }
   }
+
+  animate() {
+    this.time += 0.025;
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, this.width, this.height);
+
+    const cx = this.width / 2;
+    const cy = this.height / 2;
+    const theme = this.getColorTheme();
+
+    // 1. Central Ambient Glow
+    const bgGrad = ctx.createRadialGradient(cx, cy, 5, cx, cy, 90);
+    bgGrad.addColorStop(0, theme.glow);
+    bgGrad.addColorStop(1, 'rgba(6, 9, 15, 0)');
+    ctx.fillStyle = bgGrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 90, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Orbital Rings
+    const ringSpeed = (this.state === 'THINKING' || this.state === 'WORKING') ? 1.8 : 0.8;
+    this.drawRing(cx, cy, 45, this.time * ringSpeed, theme.primary, 1.5, [6, 12]);
+    this.drawRing(cx, cy, 65, -this.time * 0.7 * ringSpeed, theme.secondary, 1.2, [18, 8]);
+    this.drawRing(cx, cy, 85, this.time * 0.5 * ringSpeed, theme.primary, 0.8, [3, 10]);
+
+    // 3. Audio Waveform (for LISTENING mode)
+    if (this.state === 'LISTENING') {
+      ctx.beginPath();
+      ctx.strokeStyle = theme.primary;
+      ctx.lineWidth = 2;
+      for (let x = -80; x <= 80; x += 4) {
+        const dist = 1 - Math.abs(x) / 80;
+        const wave = Math.sin(x * 0.15 + this.time * 6) * 16 * dist;
+        const px = cx + x;
+        const py = cy + wave;
+        if (x === -80) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+
+    // 4. Central Reactor Core
+    const corePulse = Math.sin(this.time * 3) * 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 14 + corePulse, 0, Math.PI * 2);
+    ctx.fillStyle = theme.primary;
+    ctx.shadowColor = theme.primary;
+    ctx.shadowBlur = 15;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // 5. Orbital Neural Nodes / Particles
+    this.particles.forEach(p => {
+      p.angle += p.speed * ringSpeed;
+      const px = cx + Math.cos(p.angle) * p.radius;
+      const py = cy + Math.sin(p.angle) * (p.radius * 0.75); // slight perspective
+
+      ctx.beginPath();
+      ctx.arc(px, py, p.size, 0, Math.PI * 2);
+      ctx.fillStyle = theme.primary;
+      ctx.globalAlpha = p.alpha;
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+    });
+
+    requestAnimationFrame(this.animate);
+  }
+
+  drawRing(cx, cy, radius, angleOffset, color, lineWidth, dashArray) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angleOffset);
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    if (dashArray) ctx.setLineDash(dashArray);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
