@@ -316,3 +316,322 @@ document.addEventListener('DOMContentLoaded', () => {
   // 8. Command Dispatcher & Unified Response Deduplication
   let lastDispatchedPrompt = '';
   let lastDispatchedTime = 0;
+  let isExecutingCommand = false;
+  const recentResponseKeys = new Set();
+
+  function renderAndSpeakJarvisResponse(text) {
+    if (!text || !text.trim()) return;
+    const clean = text.trim();
+    // Signature based on text content to guarantee exactly-once rendering
+    const sig = clean.slice(0, 100);
+    if (recentResponseKeys.has(sig)) {
+      console.log('Voice/UI duplicate response suppressed:', sig);
+      return;
+    }
+    recentResponseKeys.add(sig);
+    if (recentResponseKeys.size > 50) {
+      const oldest = recentResponseKeys.values().next().value;
+      recentResponseKeys.delete(oldest);
+    }
+
+    appendDialogueMessage('jarvis', clean);
+    voice.speak(clean);
+  }
+
+  async function dispatchCommand(promptText) {
+    if (!promptText || !promptText.trim()) return;
+    const cleanPrompt = promptText.trim();
+
+    const now = Date.now();
+    // Prevent taking duplicate identical prompt within 2.5 seconds
+    if (cleanPrompt.toLowerCase() === lastDispatchedPrompt.toLowerCase() && (now - lastDispatchedTime < 2500)) {
+      console.warn('Command dispatch ignored: duplicate prompt within debounce window:', cleanPrompt);
+      return;
+    }
+
+    if (isExecutingCommand) {
+      console.warn('Command execution already in progress; ignoring duplicate dispatch:', cleanPrompt);
+      return;
+    }
+    isExecutingCommand = true;
+    voice.pauseListening();
+
+    lastDispatchedPrompt = cleanPrompt;
+    lastDispatchedTime = now;
+    appendDialogueMessage('user', cleanPrompt);
+    playChime('activate');
+    visualCore.setState('THINKING');
+
+    if (cmdInput) {
+      cmdInput.value = '';
+      cmdInput.placeholder = 'JARVIS is executing command...';
+    }
+
+    try {
+      const resp = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: cleanPrompt })
+      });
+      const data = await resp.json();
+
+      if (data.state === 'WAITING_FOR_PERMISSION') {
+        showConfirmationModal(data.token, data.response);
+      } else if (data.response) {
+        renderAndSpeakJarvisResponse(data.response);
+      }
+    } catch (e) {
+      appendDialogueMessage('jarvis', `Connection error: ${e.message}`);
+      visualCore.setState('ERROR');
+    } finally {
+      isExecutingCommand = false;
+      if (cmdInput) {
+        cmdInput.placeholder = 'Type an engineering task or speak to JARVIS...';
+      }
+      setTimeout(() => {
+        if (!voice.isSpeaking) {
+          voice.resumeListening();
+        }
+      }, 500);
+    }
+  }
+
+  // 9. Stop / Interruption
+  async function interruptExecution() {
+    voice.stopSpeaking();
+    visualCore.setState('IDLE');
+    try {
+      await fetch('/api/interrupt', { method: 'POST' });
+    } catch (e) {}
+  }
+
+  // 10. Confirmation Modal Handler
+  function showConfirmationModal(token, promptText) {
+    currentConfirmationToken = token;
+    const modal = document.getElementById('confirm-modal');
+    document.getElementById('modal-token-id').textContent = `TOKEN: ${token.token_id.slice(0, 8)}...`;
+    document.getElementById('modal-risk-badge').textContent = `LEVEL ${token.risk_level} CONFIRMATION`;
+    document.getElementById('modal-explanation').textContent = token.explanation || promptText;
+    document.getElementById('modal-target-val').textContent = `${token.tool_name} -> ${token.target}`;
+    modal.classList.remove('hidden');
+  }
+
+  document.getElementById('btn-modal-confirm').addEventListener('click', async () => {
+    if (!currentConfirmationToken) return;
+    confirmModal.classList.add('hidden');
+    try {
+      await fetch('/api/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token_id: currentConfirmationToken.token_id, confirmed: true })
+      });
+      // Resume action with verified token and original prompt
+      appendDialogueMessage('user', `[Authorized Action: ${currentConfirmationToken.action_name}]`);
+      const replayPrompt = lastDispatchedPrompt || `Resume authorized action for ${currentConfirmationToken.target}`;
+      await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: replayPrompt,
+          token_id: currentConfirmationToken.token_id
+        })
+      });
+    } catch (e) {
+      console.warn('Confirm exception', e);
+    }
+  });
+
+  document.getElementById('btn-modal-deny').addEventListener('click', async () => {
+    if (!currentConfirmationToken) return;
+    confirmModal.classList.add('hidden');
+    try {
+      await fetch('/api/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token_id: currentConfirmationToken.token_id, confirmed: false })
+      });
+      appendDialogueMessage('jarvis', 'Action was rejected by user. Operations safely halted.');
+      visualCore.setState('IDLE');
+    } catch (e) {}
+  });
+
+  // 11. Activity Logging
+  function logActivityStream(tool, action, params) {
+    if (!activityStream) return;
+    const div = document.createElement('div');
+    div.className = 'activity-log-line tool';
+    const paramStr = JSON.stringify(params || {}).slice(0, 60);
+    div.textContent = `[${tool.toUpperCase()}] ${action} (${paramStr})`;
+    activityStream.appendChild(div);
+    activityStream.scrollTop = activityStream.scrollHeight;
+  }
+
+  function logActivityVerified(receipt) {
+    if (!activityStream) return;
+    const div = document.createElement('div');
+    div.className = 'activity-log-line verified';
+    div.textContent = `[VERIFIED] ${receipt}`;
+    activityStream.appendChild(div);
+    activityStream.scrollTop = activityStream.scrollHeight;
+  }
+
+  // 12. Dialogue Message Appender with Deduplication
+  let lastAppendedMessage = { sender: '', text: '', time: 0 };
+
+  function appendDialogueMessage(sender, text) {
+    if (!text || !text.trim()) return;
+    const cleanText = text.trim();
+    const now = Date.now();
+    // Prevent duplicate dialogue bubbles for the same sender within 3.5 seconds
+    if (lastAppendedMessage.sender === sender && 
+        lastAppendedMessage.text === cleanText && 
+        (now - lastAppendedMessage.time < 3500)) {
+      console.log('Suppressed duplicate dialogue message:', sender, cleanText);
+      return;
+    }
+    lastAppendedMessage = { sender, text: cleanText, time: now };
+
+    const article = document.createElement('article');
+    article.className = `msg msg-${sender}`;
+    const avatarLetter = sender === 'jarvis' ? 'J' : 'U';
+    const meta = sender === 'jarvis' ? 'JARVIS Core' : 'User';
+    
+    article.innerHTML = `
+      <div class="msg-avatar">${avatarLetter}</div>
+      <div class="msg-body">
+        <div class="msg-meta">${meta}</div>
+        <div class="msg-content">${escapeHtml(cleanText)}</div>
+      </div>
+    `;
+    dialogueContainer.appendChild(article);
+    dialogueContainer.scrollTop = dialogueContainer.scrollHeight;
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  // 13. Memory Panel Data Management
+  async function refreshMemories() {
+    try {
+      const resp = await fetch('/api/memory?limit=30');
+      if (!resp.ok) return;
+      const memories = await resp.json();
+      
+      document.getElementById('val-memories').textContent = memories.length;
+
+      if (!memoryListContainer) return;
+      memoryListContainer.innerHTML = '';
+      if (memories.length === 0) {
+        memoryListContainer.innerHTML = '<div class="memory-empty">No memories saved yet. Try saying: "JARVIS, remember that..."</div>';
+        return;
+      }
+
+      memories.forEach(m => {
+        const card = document.createElement('div');
+        card.className = 'memory-card';
+        card.innerHTML = `
+          <div class="mem-tag">${m.category}</div>
+          <div class="mem-body">${escapeHtml(m.content)}</div>
+        `;
+        memoryListContainer.appendChild(card);
+      });
+    } catch (e) {
+      console.warn('Memory load failed', e);
+    }
+  }
+
+  // Search filter
+  if (memorySearchInput) {
+    memorySearchInput.addEventListener('input', (e) => {
+      const filter = e.target.value.toLowerCase();
+      const cards = memoryListContainer.querySelectorAll('.memory-card');
+      cards.forEach(c => {
+        const text = c.textContent.toLowerCase();
+        c.style.display = text.includes(filter) ? 'block' : 'none';
+      });
+    });
+  }
+
+  // Add explicit memory prompt
+  if (btnAddMemory) {
+    btnAddMemory.addEventListener('click', async () => {
+      const fact = prompt('Enter a fact, project detail, or preference to commit to memory:');
+      if (fact && fact.trim()) {
+        await fetch('/api/remember', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fact: fact.trim() })
+        });
+        refreshMemories();
+      }
+    });
+  }
+
+  // 14. Event Listeners for Toolbar Controls
+  if (cmdForm) {
+    cmdForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      dispatchCommand(cmdInput.value);
+    });
+  }
+
+  if (btnMic) {
+    btnMic.addEventListener('click', () => {
+      voice.toggleListening();
+    });
+  }
+
+  if (btnStop) {
+    btnStop.addEventListener('click', () => {
+      interruptExecution();
+    });
+  }
+
+  if (btnVoiceToggle) {
+    btnVoiceToggle.addEventListener('click', () => {
+      const muted = voice.toggleMute();
+      document.getElementById('label-speaker').textContent = muted ? 'Voice: OFF' : 'Voice: ON';
+      btnVoiceToggle.style.opacity = muted ? '0.6' : '1.0';
+    });
+  }
+
+  if (btnScreenCapture) {
+    btnScreenCapture.addEventListener('click', async () => {
+      dispatchCommand('What am I looking at on my screen?');
+    });
+  }
+
+  if (btnGraphToggle) {
+    btnGraphToggle.addEventListener('click', () => {
+      graphModal.classList.remove('hidden');
+      knowledgeGraph.loadData();
+    });
+  }
+
+  if (btnGraphClose) {
+    btnGraphClose.addEventListener('click', () => {
+      graphModal.classList.add('hidden');
+    });
+  }
+
+  // 15. Initial Load Health Check
+  async function initHealth() {
+    try {
+      const resp = await fetch('/api/health');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      
+      document.getElementById('val-model').textContent = data.active_model;
+      if (data.system_info && data.system_info.architecture) {
+        document.getElementById('val-arch').textContent = `macOS ${data.system_info.architecture}`;
+      }
+      refreshMemories();
+    } catch (e) {
+      console.warn('Health check exception', e);
+    }
+  }
+  initHealth();
+});

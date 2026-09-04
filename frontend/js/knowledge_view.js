@@ -80,3 +80,86 @@ class KnowledgeGraphView {
       if (!this.isRunning) {
         this.isRunning = true;
         requestAnimationFrame(this.animate);
+      }
+    } catch (e) {
+      console.warn('Failed to load knowledge graph', e);
+    }
+  }
+
+  animate() {
+    if (!this.isRunning) return;
+    this.time += 0.02;
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, this.width, this.height);
+
+    const cx = this.width / 2;
+    const cy = this.height / 2;
+
+    // Gentle spring relaxation
+    for (let i = 0; i < this.nodes.length; i++) {
+      const n1 = this.nodes[i];
+      // Slight pull to center
+      if (n1.type !== 'core') {
+        n1.vx += (cx - n1.x) * 0.0005;
+        n1.vy += (cy - n1.y) * 0.0005;
+      }
+
+      // Repulsion between nodes
+      for (let j = i + 1; j < this.nodes.length; j++) {
+        const n2 = this.nodes[j];
+        const dx = n2.x - n1.x;
+        const dy = n2.y - n1.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        if (dist < 120) {
+          const force = (120 - dist) * 0.002;
+          n1.vx -= (dx / dist) * force;
+          n1.vy -= (dy / dist) * force;
+          n2.vx += (dx / dist) * force;
+          n2.vy += (dy / dist) * force;
+        }
+      }
+
+      n1.x += n1.vx;
+      n1.y += n1.vy;
+      n1.vx *= 0.88; // Damping
+      n1.vy *= 0.88;
+    }
+
+    // 1. Draw Links
+    const nodeMap = new Map(this.nodes.map(n => [n.id, n]));
+    ctx.strokeStyle = 'rgba(0, 240, 255, 0.2)';
+    ctx.lineWidth = 1;
+    this.links.forEach(l => {
+      const src = nodeMap.get(l.source);
+      const tgt = nodeMap.get(l.target);
+      if (src && tgt) {
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
+        ctx.stroke();
+      }
+    });
+
+    // 2. Draw Nodes
+    this.nodes.forEach(n => {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.size, 0, Math.PI * 2);
+      ctx.fillStyle = n.color || '#00f0ff';
+      ctx.fill();
+
+      if (n === this.selectedNode || n === this.hoveredNode) {
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = '#fff';
+        ctx.stroke();
+      }
+
+      // Node Label
+      ctx.fillStyle = '#f0f6fc';
+      ctx.font = '10px Outfit, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(n.label, n.x, n.y + n.size + 12);
+    });
+
+    requestAnimationFrame(this.animate);
+  }
+}
