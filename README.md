@@ -89,3 +89,95 @@ python3 -m venv venv
 ```bash
 ./test.sh
 # Runs all 45 automated unit, integration, security, and E2E tests
+```
+
+### Step 5: Launch JARVIS
+```bash
+./start.sh
+```
+Open your browser at: **[http://127.0.0.1:8010](http://127.0.0.1:8010)**
+
+To stop JARVIS:
+```bash
+./stop.sh
+```
+
+---
+
+## 3. Google Gemini Setup
+
+JARVIS uses the official `google-genai` SDK and supports Google Gemini through a clean provider abstraction (`LLMProvider`).
+
+1. Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/).
+2. Copy `.env.example` to `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+3. Set your API credentials in `.env`:
+   ```env
+   GEMINI_API_KEY=your_gemini_api_key_here
+   GEMINI_MODEL=gemini-2.5-flash
+   ```
+4. **Free-First Offline Fallback**: If `GEMINI_API_KEY` is omitted or unconfigured, JARVIS automatically boots with `MockProvider`, allowing full offline development, task simulation, UI interaction, and test execution at ₹0 cost.
+
+---
+
+## 4. Security & Permission Architecture
+
+Security is enforced at the architecture level, never left to prompt suggestions:
+
+### Action Levels
+- **LEVEL 0 — READ**: Read-only actions (read files, inspect git status, search memories, capture screen, system info). Executed automatically upon user request.
+- **LEVEL 1 — SAFE WRITE**: Sandboxed filesystem writes and test commands inside the workspace. Executed automatically on explicit user intent.
+- **LEVEL 2 — EXTERNAL ACTION**: Network calls, git push, or external operations. Requires confirmation unless standing permission is granted.
+- **LEVEL 3 — HIGH RISK**: Destructive operations (`rm -rf`, disk formats, git hard resets, sensitive file access). **Always requires explicit authorization.**
+
+### Narrow Single-Action Confirmation Tokens
+- When an operation requires confirmation, the engine creates a unique `ConfirmationToken`.
+- The token is tied strictly to `(tool_name, action, target)`.
+- Authorizing a token for `./temp` does **NOT** authorize any other directory or tool.
+- Tokens expire in 300 seconds and are destroyed immediately upon use (one-time execution).
+
+### Prompt Injection & Untrusted Data Isolation
+- Content from external websites, emails, or tool outputs is treated as **passive data**.
+- All external data is automatically wrapped in `<UNTRUSTED_EXTERNAL_DATA>` boundaries with explicit instructions to the AI that system rules and policies cannot be overridden by external content.
+- Common jailbreak patterns (`ignore previous instructions`, `developer mode`, `reveal secret`) are detected and blocked.
+
+### Secret Redaction
+- All terminal output, logs, and tool receipts are scrubbed using regex patterns to redact Gemini API keys (`AIza...`), tokens (`sk-...`), and private keys before rendering to the UI or logs.
+
+---
+
+## 5. Tool & Skill Abstraction
+
+All operations pass through concrete `Tool` and `BaseSkill` implementations:
+
+| Tool | Capabilities | Permission Level |
+|---|---|---|
+| `filesystem` | `list_dir`, `read_file`, `write_file`, `search_files`, `file_info`, `delete_file` | Level 0 (Read) / Level 1 (Write) / Level 3 (Delete) |
+| `terminal` | Asynchronous shell commands with timeouts, captured stdout/stderr, and exit code checks | Level 1 (Safe) / Level 3 (Destructive Intercept) |
+| `process` | Start, inspect, monitor, stop background processes with log file capture | Level 1 |
+| `git` | Status, diff, log, branch, checkout, commit, push | Level 0 (Status/Log) / Level 1 (Commit) / Level 2 (Push) |
+| `screen` | Native macOS `/usr/sbin/screencapture` for instantaneous screen vision | Level 0 |
+| `browser` | HTTP fetching, semantic HTML cleanup, untrusted data wrapping | Level 0 |
+| `system_info` | Darwin release, Apple Silicon detection, Node/Python/Git dependency inspection | Level 0 |
+
+---
+
+## 6. Memory & Epistemic Reasoning
+
+JARVIS uses an atomic SQLite store (`data/jarvis_memory.db`) categorized into:
+- **Short-Term Memory**: Ephemeral context during active tasks.
+- **Long-Term Memory**: Important facts and preferences explicitly stated by the user.
+- **Project Memory**: Information about projects, repositories, and workspaces.
+- **Task Memory**: Scheduled reminders and background jobs.
+
+### The "Remember" Command
+Saying `"JARVIS, remember that my main project is ResumeIQ AI"` triggers:
+1. Regex extraction of the core fact.
+2. Immediate SQLite persistence.
+3. Live WebSocket broadcast (`MEMORY_UPDATED`).
+4. Instant UI HUD update without requiring a restart.
+
+### Epistemic Separation
+When preparing reasoning context, memories are strictly segregated:
