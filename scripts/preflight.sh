@@ -7,3 +7,8 @@ cd "$DIR"
 
 if [ -f "./venv/bin/python" ]; then
     PYTHON_BIN="./venv/bin/python"
+else
+    PYTHON_BIN="python3"
+fi
+
+exec "$PYTHON_BIN" preflight.py "$@"

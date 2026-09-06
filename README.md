@@ -181,3 +181,95 @@ Saying `"JARVIS, remember that my main project is ResumeIQ AI"` triggers:
 
 ### Epistemic Separation
 When preparing reasoning context, memories are strictly segregated:
+- `KNOWN`: Hard verified facts from the local system.
+- `OBSERVED`: Results directly witnessed from tool executions.
+- `REMEMBERED`: Historical facts retrieved from SQLite.
+- `INFERRED`: Hypotheses or deduction steps.
+- `UNKNOWN`: Missing data that must not be hallucinated.
+
+---
+
+## 7. Voice & Vision Operating Layers
+
+### Voice Input (Speech-to-Text)
+- Utilizes browser-native Web Speech API.
+- Implements a configurable `FINISH_MS = 900` finish window: words spoken during the pause are appended into a single buffer rather than prematurely dispatching fragmented sentences.
+- **Fast Interruption Bypass**: Urgent words (`stop`, `cancel`, `wait`, `abort`) bypass the buffer and immediately trigger an interruption signal.
+
+### Voice Output (Text-to-Speech)
+- Powered by Web Speech Synthesis with natural voice selection.
+- Features a single speech dispatcher with global mute/unmute toggle.
+- Automatically synchronized with visual core state transitions.
+
+### Screen Vision
+- Instantaneous screen capture via macOS native `/usr/sbin/screencapture`.
+- Encoded to base64 and analyzed with Gemini Vision multimodal prompts.
+- Never relies on stale cached screenshots.
+
+---
+
+## 8. Verification Engine & The "DONE" Law
+
+JARVIS operates under a strict principle:
+> **If JARVIS cannot prove that something happened, JARVIS must never claim that it happened.**
+
+Every executed step generates a verification receipt:
+- Terminal commands: Verified only when `exit_code == 0` and expected outputs are matched.
+- File creations: Verified only after checking that the file physically exists on disk and has valid byte size.
+- Process spawns: Verified by checking that the process PID remains alive after startup.
+
+If verification fails, the **Self-Repair Engine** analyzes the error, adjusts parameters, and retries up to `MAX_REPAIR_ATTEMPTS = 3` before reporting a structured failure.
+
+---
+
+## 9. Verification & Automated Testing
+
+JARVIS includes a dual-tier testing and verification framework:
+
+### 1. Master Preflight System (`preflight.py`)
+Run before any deployment to verify the running operating environment:
+```bash
+./preflight.sh
+```
+Checks:
+- System Architecture & Apple Silicon detection
+- Memory persistence and relevance retrieval
+- Filesystem containment and directory traversal blocking
+- Terminal tool execution and timeout handling
+- Destructive command intercept (`rm -rf /`)
+- macOS native screen capture
+- Browser untrusted content isolation
+- Prompt injection detection
+- Secret masking
+- Permission engine token flow & tampering defense
+- Knowledge graph builder
+- Gemini Provider / Mock fallback
+- Agent multi-step loop execution & receipts
+- Modular skill architecture
+- Frontend asset integrity
+
+### 2. Pytest Test Suite (`tests/`)
+```bash
+./test.sh
+```
+Runs 45 automated tests:
+- `test_providers.py`: MockProvider, GeminiProvider initialization, structured planning, schemas.
+- `test_memory.py`: Store lifecycle, relevance scoring, epistemic separation.
+- `test_permissions.py`: Levels 0-3, narrow token issuance, expiration, one-time consumption, tampering protection.
+- `test_security.py`: Path containment, secret masking, prompt injection patterns.
+- `test_security_audit.py`: Direct attacks, path traversal, destructive commands, token forgery.
+- `test_tools.py`: Filesystem, Terminal, SystemInfo, Browser tool lifecycles and verification methods.
+- `test_tasks.py`: Task queueing, background scheduling, status tracking.
+- `test_skills.py`: Modular skill manifests, capabilities, registries.
+- `test_agent.py`: Agent core loop, intent classification, memory capture, multi-step tasks.
+- `test_api.py`: FastAPI REST endpoints (`/api/health`, `/api/chat`, `/api/remember`, `/api/tasks`, `/api/skills`).
+- `test_e2e.py`: Complete end-to-end task execution with physical verification receipts.
+
+---
+
+## 10. Troubleshooting
+
+- **Screen capture returns 0 bytes**: Grant Screen Recording permission to your terminal / IDE in macOS `System Settings > Privacy & Security > Screen Recording`.
+- **Microphone not responding**: Click the microphone icon in the HUD and allow browser microphone access. Use Chrome, Safari, or Edge for full Web Speech API support.
+- **Port 8010 is in use**: Run `./stop.sh` to cleanly terminate any existing JARVIS process on port 8010.
+- **Gemini model warning**: If running without an internet connection or API key, JARVIS will operate using `MockProvider`. Set `GEMINI_API_KEY` in `.env` to enable full Gemini cloud reasoning.
