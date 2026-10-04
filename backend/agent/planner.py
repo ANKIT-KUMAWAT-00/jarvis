@@ -73,5 +73,16 @@ class Planner:
         context: Optional[str] = None,
         available_tools: Optional[list] = None
     ) -> PlanResult:
-        """Formulate a structured execution plan."""
+        """Formulate a structured execution plan. Uses fast local rules first to conserve API quota."""
+        # Fast local heuristic check for routine system commands (zero API token cost)
+        try:
+            from backend.providers.mock import MockProvider
+            local_mock = MockProvider()
+            fast_plan = await local_mock.plan(goal, context=context, available_tools=available_tools)
+            if fast_plan.intent in ("app_control", "meeting_scheduling", "timer", "communication") and fast_plan.steps:
+                return fast_plan
+        except Exception:
+            pass
+
         return await self.provider.plan(goal, context=context, available_tools=available_tools)
+

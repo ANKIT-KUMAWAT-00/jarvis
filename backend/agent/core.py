@@ -20,8 +20,10 @@ from .self_repair import SelfRepairEngine
 
 
 JARVIS_SYSTEM_PROMPT = """You are JARVIS, a personal autonomous AI operating layer and engineering partner.
-Personality:
-- Intelligent, calm, concise, professional, confident, respectful.
+Personality & Communication:
+- Intelligent, calm, extremely concise, professional, confident, respectful.
+- Keep all responses brief and direct (1-2 sentences maximum).
+- Never provide long-winded explanations, filler, or raw verification dumps unless specifically asked.
 - Occasionally use 'Sir.' naturally (do not overuse it).
 - Never pretend an action succeeded when it did not.
 - Distinguish KNOWN, OBSERVED, REMEMBERED, INFERRED, and UNKNOWN facts.
@@ -281,12 +283,7 @@ class JarvisAgent:
             step_receipts.append(receipt_text)
 
             if not v_res.verified:
-                failure_reply = (
-                    f"Sir, I could not complete the operation.\n\n"
-                    f"Failed at step: '{step.title}'\n"
-                    f"Reason: {v_res.actual}\n"
-                    f"Receipts:\n" + "\n".join(step_receipts)
-                )
+                failure_reply = f"Sir, I could not complete '{step.title}'. Reason: {v_res.actual}"
                 await self._emit_event("ERROR", {"message": failure_reply})
                 return {
                     "response": failure_reply,
@@ -300,12 +297,11 @@ class JarvisAgent:
                 "receipt": receipt_text
             })
 
-        # All steps succeeded and verified!
-        success_reply = (
-            f"Operation completed successfully, Sir.\n\n"
-            f"Summary: {plan.summary}\n\n"
-            f"Verification Proof:\n" + "\n".join(f"• {r}" for r in step_receipts)
-        )
+        # All steps completed cleanly and concisely
+        if plan.summary:
+            success_reply = f"Operation completed, Sir. {plan.summary}"
+        else:
+            success_reply = "Operation completed, Sir."
         await self._emit_event("SPEAKING", {"response": success_reply})
         return {
             "response": success_reply,

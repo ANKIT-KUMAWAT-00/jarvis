@@ -149,7 +149,8 @@ class GeminiProvider(LLMProvider):
 
         config = types.GenerateContentConfig(
             temperature=temperature,
-            system_instruction=system_instruction
+            system_instruction=system_instruction,
+            max_output_tokens=300
         )
 
         total_keys = max(1, len(self.api_keys))
@@ -242,7 +243,8 @@ class GeminiProvider(LLMProvider):
         config = types.GenerateContentConfig(
             temperature=0.1,
             system_instruction=system_instruction or "You are an analytical structured JSON generator.",
-            response_mime_type="application/json"
+            response_mime_type="application/json",
+            max_output_tokens=1000
         )
 
         total_keys = max(1, len(self.api_keys))
