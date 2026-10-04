@@ -1,0 +1,10 @@
+{
+  "name": "vision",
+  "version": "1.0.0",
+  "description": "macOS display frame capture and Gemini multimodal visual telemetry.",
+  "author": "JARVIS Core",
+  "capabilities": ["capture_screen"],
+  "required_tools": ["screen"],
+  "permissions_required": [0],
+  "is_enabled": true
+}

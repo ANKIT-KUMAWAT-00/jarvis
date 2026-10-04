@@ -1,0 +1,10 @@
+{
+  "name": "browser",
+  "version": "1.0.0",
+  "description": "Safe web retrieval and semantic text parsing wrapped in untrusted data boundaries.",
+  "author": "JARVIS Core",
+  "capabilities": ["fetch_webpage", "extract_semantic_text"],
+  "required_tools": ["browser"],
+  "permissions_required": [0],
+  "is_enabled": true
+}
