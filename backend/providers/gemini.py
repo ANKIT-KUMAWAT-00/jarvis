@@ -111,7 +111,7 @@ class GeminiProvider(LLMProvider):
                 err_str = str(e)
                 # If 503 high demand or 404, try gemini-3.5-flash-lite
                 if any(ind in err_str for ind in ("503", "UNAVAILABLE", "404", "high demand")):
-                    for fallback in ("gemini-3.5-flash-lite", "gemini-3.8-flash"):
+                    for fallback in ("gemini-3.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.8-flash"):
                         if fallback != self.model_name:
                             try:
                                 resp2 = client.models.generate_content(
@@ -173,9 +173,9 @@ class GeminiProvider(LLMProvider):
             except Exception as e:
                 err_str = str(e)
                 last_err = e
-                # Check for 503 high demand or 404 model migration -> try 3.5-flash-lite
+                # Check for 503 high demand or 404 model migration -> try stable models
                 if any(ind in err_str for ind in ("503", "UNAVAILABLE", "404", "high demand")):
-                    for fallback in ("gemini-3.5-flash-lite", "gemini-3.8-flash"):
+                    for fallback in ("gemini-3.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.8-flash"):
                         if fallback != self.model_name:
                             try:
                                 response = client.models.generate_content(
@@ -246,7 +246,7 @@ class GeminiProvider(LLMProvider):
             temperature=0.1,
             system_instruction=system_instruction or "You are an analytical structured JSON generator.",
             response_mime_type="application/json",
-            max_output_tokens=1000
+            max_output_tokens=4096
         )
 
         total_keys = max(1, len(self.api_keys))
@@ -277,28 +277,30 @@ class GeminiProvider(LLMProvider):
             except Exception as e:
                 err_str = str(e)
                 last_err = e
-                # Check for 404 model migration
-                if "404" in err_str and self.model_name != "gemini-3.8-flash":
-                    try:
-                        self.model_name = "gemini-3.8-flash"
-                        response = client.models.generate_content(
-                            model=self.model_name,
-                            contents=full_prompt,
-                            config=config
-                        )
-                        raw_text = response.text.strip()
-                        if raw_text.startswith("```json"):
-                            raw_text = raw_text[7:]
-                        if raw_text.startswith("```"):
-                            raw_text = raw_text[3:]
-                        if raw_text.endswith("```"):
-                            raw_text = raw_text[:-3]
-                        raw_text = raw_text.strip()
-                        parsed_data = json.loads(raw_text)
-                        return schema_class.model_validate(parsed_data)
-                    except Exception as e2:
-                        err_str = str(e2)
-                        last_err = e2
+                # Check for 503 high demand or 404 model migration -> try stable models
+                if any(ind in err_str for ind in ("503", "UNAVAILABLE", "404", "high demand")):
+                    for fallback in ("gemini-3.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.8-flash"):
+                        if fallback != self.model_name:
+                            try:
+                                self.model_name = fallback
+                                response = client.models.generate_content(
+                                    model=self.model_name,
+                                    contents=full_prompt,
+                                    config=config
+                                )
+                                raw_text = response.text.strip()
+                                if raw_text.startswith("```json"):
+                                    raw_text = raw_text[7:]
+                                if raw_text.startswith("```"):
+                                    raw_text = raw_text[3:]
+                                if raw_text.endswith("```"):
+                                    raw_text = raw_text[:-3]
+                                raw_text = raw_text.strip()
+                                parsed_data = json.loads(raw_text)
+                                return schema_class.model_validate(parsed_data)
+                            except Exception as e2:
+                                err_str = str(e2)
+                                last_err = e2
 
                 if (self._is_upstream_temporary_error(err_str) or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str) and attempt < total_keys - 1:
                     self.rotate_key(f"Limit/Quota on key #{self.current_key_index + 1}")
@@ -323,7 +325,7 @@ class GeminiProvider(LLMProvider):
                 "You are the strategic planning core of JARVIS, a personal autonomous operating layer and engineering partner on macOS.\n"
                 "Decompose user requests into clear, verifiable steps using the available tools.\n"
                 "Key Tool Usage Rules:\n"
-                "- Opening applications (Calculator, Calendar, Clock, Safari, Notes, Chrome, Spotify, etc.) or URLs: use 'app_control' with action 'open_app' and {'app_name': '...'} or 'open_url'.\n"
+                "- Opening applications (Calculator, Calendar, Safari, Notes, Chrome, Spotify, etc.), URLs, browser tabs, or media: use 'app_control' with actions 'open_app', 'open_url' (params: url, browser), 'open_new_tab' (params: browser, url), or 'play_media' (params: query, browser, service).\n"
                 "- Scheduling meetings, creating Google Meet / Zoom meeting IDs, calendar events, or setting timers: use 'meeting_scheduler' with action 'create_meeting' (params: title, date, time) or 'set_timer' (params: minutes/seconds, label).\n"
                 "- Sending emails or messages (iMessage/SMS): use 'communication' with action 'send_email' (params: to, subject, body) or 'send_message' (params: to, message).\n"
                 "- Filesystem: use 'filesystem' (read_file, write_file, list_dir).\n"

@@ -79,8 +79,19 @@ class Planner:
             from backend.providers.mock import MockProvider
             local_mock = MockProvider()
             fast_plan = await local_mock.plan(goal, context=context, available_tools=available_tools)
-            if fast_plan.intent in ("app_control", "meeting_scheduling", "timer", "communication") and fast_plan.steps:
+            handled_intents = (
+                "media_playback", "browser_control", "browser_url",
+                "meeting_scheduling", "timer", "communication"
+            )
+            # If fast plan explicitly recognized media playback or browser tab control, return it
+            if fast_plan.intent in handled_intents and fast_plan.steps:
                 return fast_plan
+
+            # For routine simple app launch/close (e.g. "open calculator", "close notes")
+            if fast_plan.intent == "app_control" and fast_plan.steps:
+                is_complex = any(k in goal.lower() for k in ("in which", "and then", "search", "after", "while", "find", "code", "file", "build"))
+                if not is_complex or not self.provider.is_configured():
+                    return fast_plan
         except Exception:
             pass
 

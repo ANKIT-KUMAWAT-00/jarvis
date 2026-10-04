@@ -65,6 +65,62 @@ class MockProvider(LLMProvider):
         g_lower = actual_goal.lower()
         words = re.findall(r'\b[a-zA-Z0-9_-]+\b', g_lower)
 
+        # 0. Media Playback & YouTube Search (play song, music, youtube video)
+        if any(w in g_lower for w in ("youtube", "song", "music", "track", "video")) and any(w in g_lower for w in ("play", "search", "open", "listen")):
+            browser = "Safari" if "safari" in g_lower else ("Google Chrome" if "chrome" in g_lower else "Safari")
+            # Extract query
+            query = "rajasthani song"
+            m = re.search(r'(?:search for|play|listen to|find|song\s+called)\s+([^,\.\n]+?)(?:\s+and|\s+in\s+which|\s+on\s+youtube|\s+site|\s*$)', g_lower)
+            if m:
+                query = m.group(1).replace("youtube site", "").replace("youtube", "").strip()
+            elif "song" in g_lower:
+                m2 = re.search(r'([a-zA-Z0-9_\s]+(?:song|music|track))', g_lower)
+                if m2:
+                    query = m2.group(1).strip()
+
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Search YouTube and play top video for '{query}' in {browser}",
+                    tool_name="app_control",
+                    action="play_media",
+                    parameters={"query": query, "browser": browser, "service": "youtube"},
+                    expected_outcome=f"Top track for '{query}' playing on YouTube in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="media_playback",
+                requires_tools=True,
+                summary=f"Searching YouTube for '{query}' and playing top result in {browser}.",
+                steps=steps,
+                verification_criteria="YouTube playback initiated in browser."
+            )
+
+        # 0.5. Browser New Tab (open chrome new tab, safari new tab)
+        if "new tab" in g_lower or ("tab" in words and any(w in ("open", "new", "create") for w in words)):
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open new tab in {browser}",
+                    tool_name="app_control",
+                    action="open_new_tab",
+                    parameters={"browser": browser, "url": ""},
+                    expected_outcome=f"New tab opened in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="browser_control",
+                requires_tools=True,
+                summary=f"Opening a new tab in {browser}.",
+                steps=steps,
+                verification_criteria=f"New tab launched in {browser}."
+            )
+
         # 1. App Control (open application, launch app, close app)
         is_close = any(w in ("close", "quit", "exit", "terminate", "kill", "stop") for w in words)
         is_open = any(w in ("open", "launch", "start") for w in words)
@@ -85,6 +141,29 @@ class MockProvider(LLMProvider):
                     elif next_w not in ("the", "a", "an", "app", "application"):
                         target = next_w.capitalize()
                         break
+
+            # If user specified a website or URL in the app
+            if "youtube" in g_lower or "http" in g_lower or ".com" in g_lower or "site" in g_lower:
+                url = "https://www.youtube.com" if "youtube" in g_lower else "https://google.com"
+                steps = [
+                    PlanStep(
+                        step_id=1,
+                        title=f"Open {url} in {target}",
+                        tool_name="app_control",
+                        action="open_url",
+                        parameters={"url": url, "browser": target},
+                        expected_outcome=f"Opened {url} in {target}",
+                        risk_level=1
+                    )
+                ]
+                return PlanResult(
+                    goal=actual_goal,
+                    intent="browser_url",
+                    requires_tools=True,
+                    summary=f"Navigating to {url} in {target}.",
+                    steps=steps,
+                    verification_criteria=f"Opened {url} in {target}."
+                )
 
             action = "close_app" if is_close and not is_open else "open_app"
             steps = [
