@@ -30,6 +30,7 @@ class JarvisConfig(BaseModel):
     # Gemini Brain Configuration
     gemini_api_key: str = Field(default="", description="Primary Google Gemini API key")
     gemini_backup_api_key: str = Field(default="", description="Backup Google Gemini API key")
+    gemini_backup_api_key_2: str = Field(default="", description="Tertiary Google Gemini API key")
     gemini_model: str = Field(default="gemini-3.8-flash", description="Configured Gemini model")
     
     # Workspace & Filesystem Boundaries
@@ -61,7 +62,7 @@ class JarvisConfig(BaseModel):
     def all_gemini_keys(self) -> list[str]:
         """Return list of distinct configured Gemini API keys in priority order."""
         keys = []
-        for raw in (self.gemini_api_key, self.gemini_backup_api_key):
+        for raw in (self.gemini_api_key, self.gemini_backup_api_key, self.gemini_backup_api_key_2):
             if raw:
                 for k in raw.split(","):
                     clean = k.strip()
@@ -100,6 +101,7 @@ class JarvisConfig(BaseModel):
             jarvis_name=os.getenv("JARVIS_NAME", "JARVIS"),
             gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
             gemini_backup_api_key=os.getenv("GEMINI_BACKUP_API_KEY", ""),
+            gemini_backup_api_key_2=os.getenv("GEMINI_BACKUP_API_KEY_2", ""),
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
             workspace_root=workspace,
             notes_dir=notes,

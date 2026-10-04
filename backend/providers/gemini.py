@@ -102,29 +102,28 @@ class GeminiProvider(LLMProvider):
             try:
                 response = client.models.generate_content(
                     model=self.model_name,
-                    contents="Ping",
-                    config=types.GenerateContentConfig(max_output_tokens=10)
+                    contents="Respond with: PONG"
                 )
-                if response and response.text:
+                if response and (response.text or response.candidates):
                     self.api_key = self.api_keys[idx]
                     return True, f"Successfully connected to Gemini model '{self.model_name}' using Key #{idx + 1} of {len(self.api_keys)}."
             except Exception as e:
                 err_str = str(e)
-                # If 404 on older model, try gemini-3.8-flash
-                if "404" in err_str and self.model_name != "gemini-3.8-flash":
-                    try:
-                        self.model_name = "gemini-3.8-flash"
-                        resp2 = client.models.generate_content(
-                            model=self.model_name,
-                            contents="Ping",
-                            config=types.GenerateContentConfig(max_output_tokens=10)
-                        )
-                        if resp2 and resp2.text:
-                            self.api_key = self.api_keys[idx]
-                            return True, f"Successfully connected to Gemini model '{self.model_name}' using Key #{idx + 1}."
-                    except Exception as e2:
-                        pool_status.append(f"Key #{idx + 1}: {str(e2)[:60]}")
-                        continue
+                # If 503 high demand or 404, try gemini-3.5-flash-lite
+                if any(ind in err_str for ind in ("503", "UNAVAILABLE", "404", "high demand")):
+                    for fallback in ("gemini-3.5-flash-lite", "gemini-3.8-flash"):
+                        if fallback != self.model_name:
+                            try:
+                                resp2 = client.models.generate_content(
+                                    model=fallback,
+                                    contents="Respond with: PONG"
+                                )
+                                if resp2 and (resp2.text or resp2.candidates):
+                                    self.model_name = fallback
+                                    self.api_key = self.api_keys[idx]
+                                    return True, f"Successfully connected to Gemini model '{self.model_name}' using Key #{idx + 1} of {len(self.api_keys)}."
+                            except Exception:
+                                continue
                 pool_status.append(f"Key #{idx + 1}: {err_str[:60]}")
 
         return False, f"All {len(self.api_keys)} Gemini keys failed: {'; '.join(pool_status)}"
@@ -171,19 +170,21 @@ class GeminiProvider(LLMProvider):
             except Exception as e:
                 err_str = str(e)
                 last_err = e
-                # Check for 404 model deprecation / migration to 3.8-flash
-                if "404" in err_str and self.model_name != "gemini-3.8-flash":
-                    try:
-                        self.model_name = "gemini-3.8-flash"
-                        response = client.models.generate_content(
-                            model=self.model_name,
-                            contents=contents,
-                            config=config
-                        )
-                        return response.text or ""
-                    except Exception as e2:
-                        err_str = str(e2)
-                        last_err = e2
+                # Check for 503 high demand or 404 model migration -> try 3.5-flash-lite
+                if any(ind in err_str for ind in ("503", "UNAVAILABLE", "404", "high demand")):
+                    for fallback in ("gemini-3.5-flash-lite", "gemini-3.8-flash"):
+                        if fallback != self.model_name:
+                            try:
+                                response = client.models.generate_content(
+                                    model=fallback,
+                                    contents=contents,
+                                    config=config
+                                )
+                                self.model_name = fallback
+                                return response.text or ""
+                            except Exception as e2:
+                                err_str = str(e2)
+                                last_err = e2
 
                 # If rate-limited or transient upstream error, rotate to next key in pool
                 if (self._is_upstream_temporary_error(err_str) or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str) and attempt < total_keys - 1:
