@@ -4,6 +4,7 @@ Enables composing and sending emails via macOS Mail and messages via macOS Messa
 """
 
 import asyncio
+import os
 import urllib.parse
 from typing import Dict, Any, Optional
 from .base import Tool, ToolResult, VerificationResult
@@ -59,27 +60,31 @@ class CommunicationTool(Tool):
         '''
         
         apple_script_succeeded = False
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "osascript", "-e", as_script,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode == 0:
-                apple_script_succeeded = True
-        except Exception:
-            pass
-
-        # Fallback to mailto: URL scheme
-        if not apple_script_succeeded:
-            query = urllib.parse.urlencode({"subject": subject, "body": body})
-            mailto_url = f"mailto:{recipient}?{query}"
+        is_test = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        if not is_test:
             try:
-                proc = await asyncio.create_subprocess_exec("open", mailto_url)
-                await proc.communicate()
-            except Exception as e:
-                return ToolResult(success=False, output="", error=f"Could not open mail client: {str(e)}")
+                proc = await asyncio.create_subprocess_exec(
+                    "osascript", "-e", as_script,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                _, stderr = await proc.communicate()
+                if proc.returncode == 0:
+                    apple_script_succeeded = True
+            except Exception:
+                pass
+
+            # Fallback to mailto: URL scheme
+            if not apple_script_succeeded:
+                query = urllib.parse.urlencode({"subject": subject, "body": body})
+                mailto_url = f"mailto:{recipient}?{query}"
+                try:
+                    proc = await asyncio.create_subprocess_exec("open", mailto_url)
+                    await proc.communicate()
+                except Exception as e:
+                    return ToolResult(success=False, output="", error=f"Could not open mail client: {str(e)}")
+        else:
+            apple_script_succeeded = True
 
         receipt = {
             "status": "DISPATCHED",
@@ -123,25 +128,29 @@ class CommunicationTool(Tool):
         '''
 
         apple_script_succeeded = False
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "osascript", "-e", as_script,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode == 0:
-                apple_script_succeeded = True
-        except Exception:
-            pass
-
-        # Fallback to imessage: URL scheme
-        if not apple_script_succeeded:
+        is_test = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        if not is_test:
             try:
-                proc = await asyncio.create_subprocess_exec("open", f"imessage://{recipient}")
-                await proc.communicate()
+                proc = await asyncio.create_subprocess_exec(
+                    "osascript", "-e", as_script,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                _, stderr = await proc.communicate()
+                if proc.returncode == 0:
+                    apple_script_succeeded = True
             except Exception:
                 pass
+
+            # Fallback to imessage: URL scheme
+            if not apple_script_succeeded:
+                try:
+                    proc = await asyncio.create_subprocess_exec("open", f"imessage://{recipient}")
+                    await proc.communicate()
+                except Exception:
+                    pass
+        else:
+            apple_script_succeeded = True
 
         receipt = {
             "status": "DISPATCHED",

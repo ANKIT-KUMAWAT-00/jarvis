@@ -97,16 +97,15 @@ class MeetingSchedulerTool(Tool):
         )
         ics_path.write_text(ics_content, encoding="utf-8")
 
-        # Open in macOS Calendar and open meeting URL
-        try:
-            await asyncio.create_subprocess_exec("open", str(ics_path))
-            # Also open Calendar app
-            await asyncio.create_subprocess_exec("open", "-a", "Calendar")
-            # Dispatch macOS notification
-            notify_script = f'display notification "Meeting: {title}\\nLink: {meeting_url}" with title "JARVIS Meeting Created"'
-            await asyncio.create_subprocess_exec("osascript", "-e", notify_script)
-        except Exception:
-            pass
+        # Notify user gently without invasive Calendar import modal
+        is_test = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        if not is_test:
+            try:
+                clean_title = title.replace('"', '\\"')
+                notify_script = f'display notification "Meeting: {clean_title}\\nLink: {meeting_url}" with title "JARVIS Meeting Created"'
+                await asyncio.create_subprocess_exec("osascript", "-e", notify_script)
+            except Exception:
+                pass
 
         # If scheduler available, register reminder
         if self.scheduler:
