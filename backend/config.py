@@ -31,6 +31,12 @@ class JarvisConfig(BaseModel):
     gemini_api_key: str = Field(default="", description="Primary Google Gemini API key")
     gemini_backup_api_key: str = Field(default="", description="Backup Google Gemini API key")
     gemini_backup_api_key_2: str = Field(default="", description="Tertiary Google Gemini API key")
+    gemini_backup_api_key_3: str = Field(default="", description="Backup Google Gemini API key #4")
+    gemini_backup_api_key_4: str = Field(default="", description="Backup Google Gemini API key #5")
+    gemini_backup_api_key_5: str = Field(default="", description="Backup Google Gemini API key #6")
+    gemini_backup_api_key_6: str = Field(default="", description="Backup Google Gemini API key #7")
+    gemini_backup_api_key_7: str = Field(default="", description="Backup Google Gemini API key #8")
+    gemini_backup_api_key_8: str = Field(default="", description="Backup Google Gemini API key #9")
     gemini_model: str = Field(default="gemini-3.8-flash", description="Configured Gemini model")
     
     # Workspace & Filesystem Boundaries
@@ -62,7 +68,23 @@ class JarvisConfig(BaseModel):
     def all_gemini_keys(self) -> list[str]:
         """Return list of distinct configured Gemini API keys in priority order."""
         keys = []
-        for raw in (self.gemini_api_key, self.gemini_backup_api_key, self.gemini_backup_api_key_2):
+        raw_sources = [
+            self.gemini_api_key,
+            self.gemini_backup_api_key,
+            self.gemini_backup_api_key_2,
+            self.gemini_backup_api_key_3,
+            self.gemini_backup_api_key_4,
+            self.gemini_backup_api_key_5,
+            self.gemini_backup_api_key_6,
+            self.gemini_backup_api_key_7,
+            self.gemini_backup_api_key_8,
+        ]
+        # Also pick up any GEMINI_API_KEY* or GEMINI_BACKUP_API_KEY* from environment dynamically
+        for env_k, env_v in sorted(os.environ.items()):
+            if (env_k.startswith("GEMINI_API_KEY") or env_k.startswith("GEMINI_BACKUP_API_KEY")) and env_v:
+                raw_sources.append(env_v)
+
+        for raw in raw_sources:
             if raw:
                 for k in raw.split(","):
                     clean = k.strip()
@@ -102,6 +124,12 @@ class JarvisConfig(BaseModel):
             gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
             gemini_backup_api_key=os.getenv("GEMINI_BACKUP_API_KEY", ""),
             gemini_backup_api_key_2=os.getenv("GEMINI_BACKUP_API_KEY_2", ""),
+            gemini_backup_api_key_3=os.getenv("GEMINI_BACKUP_API_KEY_3", ""),
+            gemini_backup_api_key_4=os.getenv("GEMINI_BACKUP_API_KEY_4", ""),
+            gemini_backup_api_key_5=os.getenv("GEMINI_BACKUP_API_KEY_5", ""),
+            gemini_backup_api_key_6=os.getenv("GEMINI_BACKUP_API_KEY_6", ""),
+            gemini_backup_api_key_7=os.getenv("GEMINI_BACKUP_API_KEY_7", ""),
+            gemini_backup_api_key_8=os.getenv("GEMINI_BACKUP_API_KEY_8", ""),
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
             workspace_root=workspace,
             notes_dir=notes,
