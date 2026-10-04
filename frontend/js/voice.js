@@ -1,22 +1,28 @@
 /**
  * JARVIS Voice Engine
- * Handles Speech Recognition (with FINISH_MS=900 buffer & fast cancel bypass)
- * and Speech Synthesis (TTS with single-dispatch, mute, and interruption).
+ * Handles Speech Recognition (with 1800ms natural speech pause detection,
+ * wake-word extension, anti-echo mic muting, and instant interruption)
+ * and Speech Synthesis (TTS with single-dispatch, mute, and echo suppression).
  */
 
 class VoiceEngine {
-  constructor(onTranscriptReady, onInterruption, onStateChange) {
+  constructor(onTranscriptReady, onInterruption, onStateChange, onInterim) {
     this.onTranscriptReady = onTranscriptReady;
     this.onInterruption = onInterruption;
     this.onStateChange = onStateChange;
+    this.onInterim = onInterim;
 
-    this.finishMs = 900;
+    this.finishMs = 1800; // 1.8s silence window to hear complete sentences
     this.isListening = false;
     this.isSpeaking = false;
     this.isMuted = false;
+    this.isPausedForSpeech = false;
 
     this.bufferText = '';
+    this.currentInterim = '';
     this.finishTimer = null;
+    this.lastDispatched = '';
+    this.lastDispatchedTime = 0;
 
     this.recognition = null;
     this.synth = window.speechSynthesis || null;
@@ -40,10 +46,15 @@ class VoiceEngine {
 
     this.recognition.onstart = () => {
       this.isListening = true;
-      if (this.onStateChange) this.onStateChange('LISTENING');
+      if (this.onStateChange && !this.isSpeaking) this.onStateChange('LISTENING');
     };
 
     this.recognition.onresult = (event) => {
+      // Ignore microphone input while JARVIS is speaking or processing (anti-echo)
+      if (this.isSpeaking || this.isPausedForSpeech) {
+        return;
+      }
+
       let interim = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         const transcript = event.results[i][0].transcript;
@@ -54,47 +65,111 @@ class VoiceEngine {
         }
       }
 
-      const activeText = (this.bufferText + ' ' + interim).trim().toLowerCase();
+      this.currentInterim = interim;
+      const combined = (this.bufferText + ' ' + interim).trim();
+      if (!combined) return;
 
-      // Fast Interruption Bypass: if user says "stop", "cancel", "wait", dispatch instantly
-      if (['stop', 'wait', 'cancel', 'abort'].includes(activeText)) {
-        if (this.finishTimer) clearTimeout(this.finishTimer);
-        this.bufferText = '';
+      const lowerText = combined.toLowerCase();
+
+      // Fast Interruption Bypass: if user says "stop", "cancel", "wait", "ruko"
+      if (['stop', 'wait', 'cancel', 'abort', 'ruko', 'chup'].includes(lowerText)) {
+        this.clearBuffer();
         this.stopSpeaking();
         if (this.onInterruption) this.onInterruption();
         return;
       }
 
-      // Reset finish buffer window
+      // Live caption / interim visual feedback
+      if (this.onInterim) {
+        this.onInterim(combined);
+      }
+
+      // If user only spoke a wake-word ("jarvis", "hey jarvis", "jarvis hindi"),
+      // give an extended 2800ms silence window to let them complete their command
+      const isWakeOnly = /^(hey\s+)?jarvis(\s+(hindi|bhai|ji))?$/i.test(lowerText);
+      const waitDelay = isWakeOnly ? 2800 : this.finishMs;
+
       if (this.finishTimer) clearTimeout(this.finishTimer);
       this.finishTimer = setTimeout(() => {
-        const finalText = (this.bufferText + ' ' + interim).trim();
-        if (finalText.length > 0) {
-          this.bufferText = '';
-          this.onTranscriptReady(finalText);
-        }
-      }, this.finishMs);
+        this.finalizeAndDispatch();
+      }, waitDelay);
     };
 
     this.recognition.onerror = (e) => {
-      console.warn('SpeechRecognition error:', e.error);
-      this.isListening = false;
-      if (this.onStateChange) this.onStateChange('IDLE');
+      if (e.error !== 'no-speech') {
+        console.warn('SpeechRecognition error:', e.error);
+      }
     };
 
     this.recognition.onend = () => {
-      this.isListening = false;
-      if (this.onStateChange) this.onStateChange('IDLE');
+      // Auto-restart recognition if continuous mode is still desired and not paused
+      if (this.isListening && !this.isPausedForSpeech) {
+        try {
+          this.recognition.start();
+        } catch (e) {}
+      } else {
+        this.isListening = false;
+        if (this.onStateChange && !this.isSpeaking) this.onStateChange('IDLE');
+      }
     };
+  }
+
+  finalizeAndDispatch() {
+    if (this.isSpeaking || this.isPausedForSpeech) return;
+
+    const finalText = (this.bufferText + ' ' + this.currentInterim).trim();
+    this.clearBuffer();
+
+    if (!finalText) return;
+
+    // Suppress rapid duplicate dispatches
+    const now = Date.now();
+    if (finalText.toLowerCase() === this.lastDispatched.toLowerCase() && (now - this.lastDispatchedTime < 2500)) {
+      console.log('VoiceEngine: Suppressed duplicate speech dispatch:', finalText);
+      return;
+    }
+
+    this.lastDispatched = finalText;
+    this.lastDispatchedTime = now;
+
+    // Mute mic before sending so JARVIS never listens to his own echo
+    this.pauseListening();
+
+    if (this.onTranscriptReady) {
+      this.onTranscriptReady(finalText);
+    }
+  }
+
+  clearBuffer() {
+    this.bufferText = '';
+    this.currentInterim = '';
+    if (this.finishTimer) {
+      clearTimeout(this.finishTimer);
+      this.finishTimer = null;
+    }
+  }
+
+  pauseListening() {
+    this.isPausedForSpeech = true;
+    this.clearBuffer();
+  }
+
+  resumeListening() {
+    this.isPausedForSpeech = false;
+    this.clearBuffer();
+    if (this.isListening && this.recognition) {
+      try {
+        this.recognition.start();
+      } catch (e) {}
+    }
   }
 
   initVoices() {
     if (!this.synth) return;
     const selectVoice = () => {
       const voices = this.synth.getVoices();
-      // Prefer modern clear English voices (Daniel, Samantha, Google UK English Male, etc.)
       this.preferredVoice = voices.find(v => 
-        (v.name.includes('Daniel') || v.name.includes('Google UK English Male') || v.name.includes('Oliver') || v.name.includes('Samantha')) && v.lang.startsWith('en')
+        (v.name.includes('Daniel') || v.name.includes('Google UK English Male') || v.name.includes('Oliver') || v.name.includes('Samantha') || v.name.includes('Rishi')) && v.lang.startsWith('en')
       ) || voices.find(v => v.lang.startsWith('en')) || voices[0];
     };
 
@@ -107,14 +182,20 @@ class VoiceEngine {
   toggleListening() {
     if (!this.recognition) return false;
     if (this.isListening) {
-      this.recognition.stop();
       this.isListening = false;
+      this.pauseListening();
+      try {
+        this.recognition.stop();
+      } catch (e) {}
+      if (this.onStateChange) this.onStateChange('IDLE');
       return false;
     } else {
-      this.stopSpeaking(); // Interrupt active speech when starting to listen
-      this.bufferText = '';
+      this.stopSpeaking();
+      this.resumeListening();
+      this.isListening = true;
       try {
         this.recognition.start();
+        if (this.onStateChange) this.onStateChange('LISTENING');
         return true;
       } catch (e) {
         console.warn('Recognition start exception:', e);
@@ -137,25 +218,32 @@ class VoiceEngine {
 
     if (!cleanText) return;
 
+    // Immediately pause recognition while speaking to prevent mic from hearing speakers
+    this.pauseListening();
+
     const utterance = new SpeechSynthesisUtterance(cleanText);
     if (this.preferredVoice) utterance.voice = this.preferredVoice;
     utterance.rate = 1.05;
-    utterance.pitch = 0.95; // Slightly lower pitch for calm professional presence
+    utterance.pitch = 0.95;
 
     utterance.onstart = () => {
       this.isSpeaking = true;
       if (this.onStateChange) this.onStateChange('SPEAKING');
     };
 
-    utterance.onend = () => {
+    const finishSpeech = () => {
       this.isSpeaking = false;
       if (this.onStateChange) this.onStateChange('IDLE');
+      // Buffer of 400ms after speech ends to prevent speaker reverberation
+      setTimeout(() => {
+        if (!this.isSpeaking) {
+          this.resumeListening();
+        }
+      }, 400);
     };
 
-    utterance.onerror = () => {
-      this.isSpeaking = false;
-      if (this.onStateChange) this.onStateChange('IDLE');
-    };
+    utterance.onend = finishSpeech;
+    utterance.onerror = finishSpeech;
 
     this.synth.speak(utterance);
   }

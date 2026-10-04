@@ -63,6 +63,12 @@ document.addEventListener('DOMContentLoaded', () => {
         else btnMic.classList.remove('listening');
       }
       visualCore.setState(state);
+    },
+    // onInterim (shows live speech caption so user sees JARVIS listening)
+    (interimText) => {
+      if (cmdInput && !isExecutingCommand) {
+        cmdInput.placeholder = `Listening: "${interimText}"...`;
+      }
     }
   );
 
@@ -287,8 +293,7 @@ document.addEventListener('DOMContentLoaded', () => {
         taskStateBadge.textContent = 'COMPLETED';
         taskStateBadge.className = 'badge';
       }
-      appendDialogueMessage('jarvis', event.response);
-      voice.speak(event.response);
+      renderAndSpeakJarvisResponse(event.response);
     }
 
     else if (type === 'MEMORY_UPDATED') {
@@ -308,39 +313,77 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // 8. Command Dispatcher
+  // 8. Command Dispatcher & Unified Response Deduplication
   let lastDispatchedPrompt = '';
+  let isExecutingCommand = false;
+  const recentResponseKeys = new Set();
+
+  function renderAndSpeakJarvisResponse(text) {
+    if (!text || !text.trim()) return;
+    const clean = text.trim();
+    // Signature based on text content to guarantee exactly-once rendering
+    const sig = clean.slice(0, 100);
+    if (recentResponseKeys.has(sig)) {
+      console.log('Voice/UI duplicate response suppressed:', sig);
+      return;
+    }
+    recentResponseKeys.add(sig);
+    if (recentResponseKeys.size > 50) {
+      const oldest = recentResponseKeys.values().next().value;
+      recentResponseKeys.delete(oldest);
+    }
+
+    appendDialogueMessage('jarvis', clean);
+    voice.speak(clean);
+  }
 
   async function dispatchCommand(promptText) {
-    if (!promptText.trim()) return;
-    lastDispatchedPrompt = promptText.trim();
+    if (!promptText || !promptText.trim()) return;
+    const cleanPrompt = promptText.trim();
 
-    appendDialogueMessage('user', promptText);
+    if (isExecutingCommand) {
+      console.warn('Command execution already in progress; ignoring duplicate dispatch:', cleanPrompt);
+      return;
+    }
+    isExecutingCommand = true;
+    voice.pauseListening();
+
+    lastDispatchedPrompt = cleanPrompt;
+    appendDialogueMessage('user', cleanPrompt);
     playChime('activate');
     visualCore.setState('THINKING');
 
-    if (cmdInput) cmdInput.value = '';
+    if (cmdInput) {
+      cmdInput.value = '';
+      cmdInput.placeholder = 'JARVIS is executing command...';
+    }
 
     try {
       const resp = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: promptText })
+        body: JSON.stringify({ prompt: cleanPrompt })
       });
       const data = await resp.json();
 
       if (data.state === 'WAITING_FOR_PERMISSION') {
         showConfirmationModal(data.token, data.response);
-      } else if (data.response && !voice.isSpeaking) {
-        // Handled via WebSocket broadcast, but fallback display if WS missed
-        if (!dialogueContainer.lastElementChild?.textContent.includes(data.response.slice(0, 30))) {
-          appendDialogueMessage('jarvis', data.response);
-          voice.speak(data.response);
-        }
+      } else if (data.response) {
+        renderAndSpeakJarvisResponse(data.response);
       }
     } catch (e) {
       appendDialogueMessage('jarvis', `Connection error: ${e.message}`);
       visualCore.setState('ERROR');
+    } finally {
+      isExecutingCommand = false;
+      if (cmdInput) {
+        cmdInput.placeholder = 'Type an engineering task or speak to JARVIS...';
+      }
+      setTimeout(() => {
+        if (!voice.isSpeaking) {
+          voice.resumeListening();
+        }
+      }, 500);
     }
   }
 
