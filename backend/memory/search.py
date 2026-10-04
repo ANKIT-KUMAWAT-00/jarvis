@@ -51,12 +51,15 @@ class MemoryRetriever:
         self,
         query: str,
         observed_facts: List[str] | None = None,
-        system_knowns: List[str] | None = None
+        system_knowns: List[str] | None = None,
+        recent_tasks: List[Dict[str, Any]] | None = None
     ) -> Dict[str, List[str]]:
         """
         Constructs context strictly segregated by epistemic certainty:
         - KNOWN: Confirmed system facts and verified local state
         - REMEMBERED: Facts retrieved from memory database
+        - LEARNED_CORRECTIONS: Prior user corrections and mistake lessons
+        - RECENT_ACTIONS: Tasks and operations recently executed
         - OBSERVED: Immediate execution outputs from current turn
         - INFERRED: Logical deductions made during reasoning
         - UNKNOWN: Missing information that must NOT be hallucinated
@@ -68,9 +71,35 @@ class MemoryRetriever:
             for m, _ in relevant_memories
         ]
 
+        # Fetch past corrections & mistake lessons
+        correction_memories = self.store.get_memories(category="correction", limit=5)
+        learned_corrections = [
+            f"{m.content}" for m in correction_memories
+        ]
+
+        # Format recent tasks & outputs
+        recent_actions = []
+        if recent_tasks:
+            for t in recent_tasks[-5:]:
+                goal_text = t.get("goal", "")
+                state = t.get("state", "COMPLETED")
+                summary = t.get("summary", "")
+                resp = t.get("response", "")
+                receipts = t.get("receipts", [])
+                rec_str = f"Task: '{goal_text}' | Status: {state}"
+                if summary:
+                    rec_str += f" | Action: {summary}"
+                elif resp:
+                    rec_str += f" | Output: {resp[:120]}"
+                if receipts:
+                    rec_str += f" | Detail: {receipts[-1][:120]}"
+                recent_actions.append(rec_str)
+
         context = {
             "KNOWN": system_knowns or [],
             "REMEMBERED": remembered,
+            "LEARNED_CORRECTIONS": learned_corrections,
+            "RECENT_ACTIONS": recent_actions,
             "OBSERVED": observed_facts or [],
             "INFERRED": [],
             "UNKNOWN": []
