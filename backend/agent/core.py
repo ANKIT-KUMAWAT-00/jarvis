@@ -315,12 +315,10 @@ class JarvisAgent:
         epistemic_ctx = self.retriever.build_epistemic_context(text)
         ctx_str = self.retriever.format_context_for_prompt(epistemic_ctx)
 
-        messages = [
-            {"role": "system", "content": f"{JARVIS_SYSTEM_PROMPT}\n\n{ctx_str}"},
-            {"role": "user", "content": text}
-        ]
+        full_system = f"{JARVIS_SYSTEM_PROMPT}\n\n{ctx_str}" if ctx_str else JARVIS_SYSTEM_PROMPT
+        messages = [{"role": "user", "content": text}]
         
-        reply = await self.provider.chat(messages, system_instruction=JARVIS_SYSTEM_PROMPT)
+        reply = await self.provider.chat(messages, system_instruction=full_system)
         await self._emit_event("SPEAKING", {"response": reply})
         return {
             "response": reply,

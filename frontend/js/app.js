@@ -315,6 +315,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 8. Command Dispatcher & Unified Response Deduplication
   let lastDispatchedPrompt = '';
+  let lastDispatchedTime = 0;
   let isExecutingCommand = false;
   const recentResponseKeys = new Set();
 
@@ -341,6 +342,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!promptText || !promptText.trim()) return;
     const cleanPrompt = promptText.trim();
 
+    const now = Date.now();
+    // Prevent taking duplicate identical prompt within 2.5 seconds
+    if (cleanPrompt.toLowerCase() === lastDispatchedPrompt.toLowerCase() && (now - lastDispatchedTime < 2500)) {
+      console.warn('Command dispatch ignored: duplicate prompt within debounce window:', cleanPrompt);
+      return;
+    }
+
     if (isExecutingCommand) {
       console.warn('Command execution already in progress; ignoring duplicate dispatch:', cleanPrompt);
       return;
@@ -349,6 +357,7 @@ document.addEventListener('DOMContentLoaded', () => {
     voice.pauseListening();
 
     lastDispatchedPrompt = cleanPrompt;
+    lastDispatchedTime = now;
     appendDialogueMessage('user', cleanPrompt);
     playChime('activate');
     visualCore.setState('THINKING');

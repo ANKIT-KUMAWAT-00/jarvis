@@ -6,10 +6,14 @@ and static frontend serving.
 
 import asyncio
 import json
+import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+
+logger = logging.getLogger("jarvis.server")
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -228,14 +232,31 @@ async def update_gemini_api_key(req: ConfigKeyRequest):
     return {"status": "success", "model": active_provider.get_model_name(), "message": message}
 
 
+chat_lock = asyncio.Lock()
+recent_chat_requests: Dict[str, float] = {}
+
 @app.post("/api/chat")
 async def handle_chat(req: ChatRequest):
-    """Primary conversational & task execution entrypoint."""
-    if not req.prompt.strip():
+    """Primary conversational & task execution entrypoint with atomic deduplication."""
+    clean_prompt = req.prompt.strip()
+    if not clean_prompt:
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
     
+    now = time.time()
+    async with chat_lock:
+        last_seen = recent_chat_requests.get(clean_prompt.lower(), 0.0)
+        if not req.token_id and (now - last_seen < 3.0):
+            logger.warning(f"Server-side deduplication: dropping identical rapid prompt '{clean_prompt[:30]}'")
+            return {
+                "response": "Understood, Sir. Command is already in progress.",
+                "state": "COMPLETED",
+                "verified": True,
+                "receipts": []
+            }
+        recent_chat_requests[clean_prompt.lower()] = now
+
     check_and_refresh_provider()
-    result = await agent.run(user_input=req.prompt, confirmation_token_id=req.token_id)
+    result = await agent.run(user_input=clean_prompt, confirmation_token_id=req.token_id)
     return result
 
 

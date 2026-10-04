@@ -141,7 +141,9 @@ class GeminiProvider(LLMProvider):
         contents = []
         for m in messages:
             role = m.get("role", "user")
-            gemini_role = "user" if role in ("user", "system") else "model"
+            if role == "system":
+                continue
+            gemini_role = "user" if role == "user" else "model"
             contents.append(types.Content(
                 role=gemini_role,
                 parts=[types.Part.from_text(text=m.get("content", ""))]
