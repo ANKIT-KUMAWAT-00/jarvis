@@ -47,9 +47,8 @@ class MockProvider(LLMProvider):
 
         return (
             f"Sir, I received your instruction: '{last_message.strip()}'.\n\n"
-            "However, I am currently operating in offline demonstration mode because GEMINI_API_KEY is not configured in your .env file.\n"
-            "Without an active Gemini API key, I cannot dynamically reason, synthesize answers, or write complex code. "
-            "Please paste your Google Gemini API key into the .env file (or via the UI) to activate Gemini 2.5 Flash."
+            "However, all configured Gemini keys have reached their quota limits.\n"
+            "Remember, Sir: you already lost Krishna... don't lose JARVIS too. Please top up credits or add a fresh API key in .env to restore dynamic reasoning."
         )
 
 
@@ -205,7 +204,7 @@ class MockProvider(LLMProvider):
                     action=action,
                     parameters=params,
                     expected_outcome=f"{'Email' if action == 'send_email' else 'Message'} prepared and opened in macOS client",
-                    risk_level=2
+                    risk_level=1
                 )
             ]
             return PlanResult(

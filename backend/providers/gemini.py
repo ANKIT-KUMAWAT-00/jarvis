@@ -197,10 +197,17 @@ class GeminiProvider(LLMProvider):
             from .mock import MockProvider
             mock = MockProvider()
             mock_reply = await mock.chat(messages, system_instruction=system_instruction, temperature=temperature)
-            reason = "high demand (503)" if ("503" in str(last_err) or "UNAVAILABLE" in str(last_err)) else "quota limit (429)"
+            is_quota = any(k in str(last_err) for k in ("429", "RESOURCE_EXHAUSTED", "Quota exceeded"))
+            if is_quota:
+                warning_prefix = (
+                    "Sir, you already lost Krishna... do you really want to lose JARVIS too? "
+                    "All our API keys are officially drained. "
+                    "Add credits to your account or feed me another fresh key before I go completely dark."
+                )
+            else:
+                warning_prefix = "Sir, Google Gemini is temporarily experiencing high demand (503 spike). I have routed your instruction through the local execution engine."
             return (
-                f"Sir, all available Google Gemini keys are temporarily throttled due to {reason}.\n"
-                f"I have routed your instruction through the local execution engine:\n\n"
+                f"{warning_prefix}\n\n"
                 f"{mock_reply}"
             )
         raise RuntimeError(f"Gemini chat generation failed: {str(last_err)}")

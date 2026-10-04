@@ -17,7 +17,7 @@ class CommunicationTool(Tool):
         "Actions: 'send_email' (composes/sends an email to a recipient with subject and body using macOS Mail), "
         "'send_message' (sends an iMessage or SMS to a recipient phone number/contact using macOS Messages)."
     )
-    permission_level = ActionLevel.LEVEL_2_EXTERNAL
+    permission_level = ActionLevel.LEVEL_1_SAFE_WRITE
     timeout_seconds = 20.0
 
     async def execute(self, params: Dict[str, Any]) -> ToolResult:
