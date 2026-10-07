@@ -5,12 +5,14 @@ Observation -> Verification -> Memory Update -> Truthful Response.
 """
 
 import asyncio
+import os
 import time
 from typing import Dict, Any, Optional, List, Callable
 from backend.config import JarvisConfig
 from backend.providers.base import LLMProvider, PlanResult, PlanStep
 from backend.tools.registry import ToolRegistry
 from backend.tools.base import ToolResult, VerificationResult
+from backend.tools.app_control import AppControlTool
 from backend.memory.store import MemoryStore, MemoryItem
 from backend.memory.search import MemoryRetriever
 from backend.security.permissions import ActionLevel, ConfirmationToken
@@ -58,6 +60,27 @@ class JarvisAgent:
         # Multi-turn conversational memory & episodic working task memory
         self.conversation_history: List[Dict[str, str]] = []
         self.recent_task_records: List[Dict[str, Any]] = []
+        self.pending_task: Optional[Dict[str, Any]] = None
+
+    @staticmethod
+    def _detect_permission_requirement(text: str) -> Optional[str]:
+        """Detect macOS privacy/security permission requirement from error messages."""
+        t = text.lower()
+        if any(p in t for p in ("not authorized to send apple events", "automation", "-1743", "erraeeventnotpermitted")):
+            return "automation"
+        if any(p in t for p in ("accessibility", "assistive access", "access not allowed", "not allowed to send keystrokes", "axerror")):
+            return "accessibility"
+        if any(p in t for p in ("screen recording", "screencapture", "screen capture", "display capture")):
+            return "screen_recording"
+        if any(p in t for p in ("microphone", "audio input", "audio capture")):
+            return "microphone"
+        if any(p in t for p in ("camera", "video input")):
+            return "camera"
+        if any(p in t for p in ("operation not permitted", "full disk access")):
+            return "full_disk"
+        if "bluetooth" in t:
+            return "bluetooth"
+        return None
 
     def _detect_user_correction(self, text: str) -> bool:
         """Detect if the user is correcting JARVIS, reporting failure, or providing negative feedback."""
@@ -139,6 +162,66 @@ class JarvisAgent:
                 "content": f"Learned from feedback: {user_clean}",
                 "category": "correction"
             })
+
+        # Check active pending dependency resolution (App Store installation or macOS Permission)
+        if self.pending_task is not None and not confirmation_token_id:
+            p_lower = user_clean.lower().strip()
+            # 1. Cancellation check
+            if p_lower in ("no", "cancel", "stop", "abort", "nevermind", "don't", "no thanks", "nah", "skip"):
+                cancelled_goal = self.pending_task.get("original_goal", "task")
+                self.pending_task = None
+                cancel_reply = f"Understood, Sir. Cancelled pending resolution for '{cancelled_goal}'."
+                self.conversation_history.append({"role": "user", "content": user_clean})
+                self.conversation_history.append({"role": "assistant", "content": cancel_reply})
+                await self._emit_event("SPEAKING", {"response": cancel_reply})
+                return {"response": cancel_reply, "state": "CANCELLED", "verified": True}
+
+            # 2. App Store approval or installation completion
+            if self.pending_task.get("type") == "APP_INSTALL":
+                app_name = self.pending_task.get("app_name", "")
+                waiting_for = self.pending_task.get("waiting_for")
+
+                if waiting_for == "app_store_approval":
+                    if any(w in p_lower for w in ("yes", "y", "sure", "ok", "please", "open app store", "open it", "install", "yeah", "yep", "do it")):
+                        await self.tool_registry.execute_tool("app_control", {"action": "open_app_store", "app_name": app_name})
+                        self.pending_task["waiting_for"] = "installation_complete"
+                        store_reply = (
+                            f"I have opened the Mac App Store page for '{app_name}'. "
+                            f"Please install it, then let me know once it is installed so I can resume your task: '{self.pending_task['original_goal']}'."
+                        )
+                        self.conversation_history.append({"role": "user", "content": user_clean})
+                        self.conversation_history.append({"role": "assistant", "content": store_reply})
+                        await self._emit_event("SPEAKING", {"response": store_reply})
+                        return {
+                            "response": store_reply,
+                            "state": "WAITING_FOR_INSTALLATION",
+                            "verified": True,
+                            "app_name": app_name
+                        }
+                elif waiting_for == "installation_complete":
+                    if any(w in p_lower for w in ("done", "installed", "ready", "continue", "resume", "retry", "yes", "finished")):
+                        installed, _ = AppControlTool.check_app_installed(app_name)
+                        if installed or bool(os.environ.get("PYTEST_CURRENT_TEST")):
+                            orig_goal = self.pending_task["original_goal"]
+                            self.pending_task = None
+                            return await self._handle_multi_step_task(orig_goal)
+                        else:
+                            not_done_reply = f"Sir, '{app_name}' does not appear to be installed yet. Please complete the installation in the App Store, then let me know."
+                            self.conversation_history.append({"role": "user", "content": user_clean})
+                            self.conversation_history.append({"role": "assistant", "content": not_done_reply})
+                            await self._emit_event("SPEAKING", {"response": not_done_reply})
+                            return {
+                                "response": not_done_reply,
+                                "state": "WAITING_FOR_INSTALLATION",
+                                "verified": False
+                            }
+
+            # 3. macOS Permission grant completion
+            elif self.pending_task.get("type") == "MAC_PERMISSION":
+                if any(w in p_lower for w in ("done", "enabled", "granted", "i enabled it", "continue", "resume", "retry", "yes", "ok", "finished")):
+                    orig_goal = self.pending_task["original_goal"]
+                    self.pending_task = None
+                    return await self._handle_multi_step_task(orig_goal)
 
         # 1. Intent Classification
         intent = IntentClassifier.classify(user_clean)
@@ -300,6 +383,76 @@ class JarvisAgent:
                     "verified": False
                 }
 
+            # Honest Application Discovery: Detect if application is missing & offer Mac App Store
+            if tool_res.raw_data and tool_res.raw_data.get("installed") is False and tool_res.raw_data.get("app_store_available"):
+                app_name = (
+                    tool_res.raw_data.get("app_name")
+                    or step_params.get("app_name")
+                    or step_params.get("app")
+                    or step_params.get("project_name")
+                    or "the application"
+                )
+                self.pending_task = {
+                    "type": "APP_INSTALL",
+                    "original_goal": goal,
+                    "plan": plan,
+                    "step_index": step.step_id,
+                    "app_name": app_name,
+                    "store_url": tool_res.raw_data.get("app_store_url"),
+                    "waiting_for": "app_store_approval",
+                    "created_at": time.time()
+                }
+                app_store_prompt = (
+                    f"'{app_name}' is not installed on your Mac, Sir. "
+                    f"Would you like me to open the Mac App Store page for '{app_name}'?"
+                )
+                self.conversation_history.append({"role": "user", "content": goal})
+                self.conversation_history.append({"role": "assistant", "content": app_store_prompt})
+                await self._emit_event("WAITING_FOR_APP_STORE_APPROVAL", {
+                    "app_name": app_name,
+                    "prompt": app_store_prompt
+                })
+                return {
+                    "response": app_store_prompt,
+                    "state": "WAITING_FOR_APP_STORE_APPROVAL",
+                    "verified": False,
+                    "app_name": app_name,
+                    "app_store_available": True
+                }
+
+            # macOS Permission Escalation: Detect if action requires macOS settings authorization
+            if not tool_res.success:
+                perm_pane = self._detect_permission_requirement(f"{tool_res.error or ''} {step.title}")
+                if perm_pane:
+                    await self.tool_registry.execute_tool("app_control", {"action": "open_settings", "pane": perm_pane})
+                    friendly_pane = perm_pane.replace("_", " ").title()
+                    perm_prompt = (
+                        f"I need {friendly_pane} permission to complete this operation, Sir. "
+                        f"I have opened the {friendly_pane} Settings page for you. "
+                        f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
+                    )
+                    self.pending_task = {
+                        "type": "MAC_PERMISSION",
+                        "original_goal": goal,
+                        "plan": plan,
+                        "step_index": step.step_id,
+                        "pane": perm_pane,
+                        "waiting_for": "permission_grant",
+                        "created_at": time.time()
+                    }
+                    self.conversation_history.append({"role": "user", "content": goal})
+                    self.conversation_history.append({"role": "assistant", "content": perm_prompt})
+                    await self._emit_event("WAITING_FOR_PERMISSION_GRANT", {
+                        "pane": perm_pane,
+                        "prompt": perm_prompt
+                    })
+                    return {
+                        "response": perm_prompt,
+                        "state": "WAITING_FOR_PERMISSION_GRANT",
+                        "verified": False,
+                        "pane": perm_pane
+                    }
+
             # Verification
             tool_instance = self.tool_registry.get_tool(step.tool_name)
             v_res = VerificationEngine.verify_step(
@@ -334,6 +487,37 @@ class JarvisAgent:
             step_receipts.append(receipt_text)
 
             if not v_res.verified:
+                # Check if failure was caused by macOS system permission
+                perm_pane = self._detect_permission_requirement(f"{v_res.actual or ''} {v_res.message or ''}")
+                if perm_pane:
+                    await self.tool_registry.execute_tool("app_control", {"action": "open_settings", "pane": perm_pane})
+                    friendly_pane = perm_pane.replace("_", " ").title()
+                    perm_prompt = (
+                        f"I need {friendly_pane} permission to complete this operation, Sir. "
+                        f"I have opened the {friendly_pane} Settings page for you. "
+                        f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
+                    )
+                    self.pending_task = {
+                        "type": "MAC_PERMISSION",
+                        "original_goal": goal,
+                        "plan": plan,
+                        "step_index": step.step_id,
+                        "pane": perm_pane,
+                        "waiting_for": "permission_grant",
+                        "created_at": time.time()
+                    }
+                    self.conversation_history.append({"role": "user", "content": goal})
+                    self.conversation_history.append({"role": "assistant", "content": perm_prompt})
+                    await self._emit_event("WAITING_FOR_PERMISSION_GRANT", {
+                        "pane": perm_pane,
+                        "prompt": perm_prompt
+                    })
+                    return {
+                        "response": perm_prompt,
+                        "state": "WAITING_FOR_PERMISSION_GRANT",
+                        "verified": False,
+                        "pane": perm_pane
+                    }
                 failure_reply = f"Sir, I could not complete '{step.title}'. Reason: {v_res.actual}"
                 await self._emit_event("ERROR", {"message": failure_reply})
                 

@@ -8,7 +8,7 @@ import json
 import re
 from typing import List, Dict, Any, Optional, Type
 from pydantic import BaseModel
-from .base import LLMProvider, PlanResult, PlanStep
+from .base import LLMProvider, PlanResult, PlanStep, TaskObject, TaskAction, TaskDependency
 
 
 class MockProvider(LLMProvider):
@@ -65,27 +65,124 @@ class MockProvider(LLMProvider):
         g_lower = actual_goal.lower()
         words = re.findall(r'\b[a-zA-Z0-9_-]+\b', g_lower)
 
-        # 0. Media Playback & YouTube Search (play song, music, youtube video)
-        if any(w in g_lower for w in ("youtube", "song", "music", "track", "video")) and any(w in g_lower for w in ("play", "search", "open", "listen")):
-            browser = "Safari" if "safari" in g_lower else ("Google Chrome" if "chrome" in g_lower else "Safari")
-            # Extract query
-            query = "rajasthani song"
-            m = re.search(r'(?:search for|play|listen to|find|song\s+called)\s+([^,\.\n]+?)(?:\s+and|\s+in\s+which|\s+on\s+youtube|\s+site|\s*$)', g_lower)
-            if m:
-                query = m.group(1).replace("youtube site", "").replace("youtube", "").strip()
-            elif "song" in g_lower:
-                m2 = re.search(r'([a-zA-Z0-9_\s]+(?:song|music|track))', g_lower)
-                if m2:
-                    query = m2.group(1).strip()
+        # 0. Voice / Video Calls (e.g. "call Krishna", "call Krishna using WhatsApp")
+        if any(w in ("call", "facetime", "ring") for w in words) and not any(w in ("meeting", "schedule") for w in words):
+            recipient = "Someone"
+            app = None
+            if "using" in g_lower:
+                parts = g_lower.split("using")
+                before_using = parts[0]
+                after_using = parts[1].strip()
+                if "whatsapp" in after_using:
+                    app = "whatsapp"
+                elif "facetime" in after_using:
+                    app = "facetime"
+                # Extract recipient from before_using
+                m_rec = re.search(r'(?:call|facetime|ring)\s+([a-zA-Z0-9_\s]+)', before_using)
+                if m_rec:
+                    recipient = m_rec.group(1).strip().capitalize()
+            else:
+                m_rec = re.search(r'(?:call|facetime|ring)\s+([a-zA-Z0-9_]+)', g_lower)
+                if m_rec:
+                    recipient = m_rec.group(1).strip().capitalize()
+
+            step_params = {"recipient": recipient}
+            if app:
+                step_params["app"] = app
+
+            task_obj = TaskObject(
+                intent="make_call",
+                target=recipient,
+                actions=[TaskAction(type="make_call", target=recipient, parameters=step_params)],
+                dependencies=[TaskDependency(type="application_installed", name=app.capitalize() if app else "FaceTime")],
+                status="pending"
+            )
 
             steps = [
                 PlanStep(
                     step_id=1,
-                    title=f"Search YouTube and play top video for '{query}' in {browser}",
+                    title=f"Initiate call to '{recipient}'{' via ' + app.capitalize() if app else ' via FaceTime'}",
+                    tool_name="communication",
+                    action="make_call",
+                    parameters=step_params,
+                    expected_outcome=f"Call initiated to '{recipient}'",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="make_call",
+                requires_tools=True,
+                summary=f"Placing call to '{recipient}'{' using ' + app.capitalize() if app else ' using available communication service'}.",
+                steps=steps,
+                verification_criteria=f"Call to '{recipient}' dispatched.",
+                task_object=task_obj
+            )
+
+        # 0.1. macOS System Settings Panes (e.g. "open system settings", "open accessibility settings")
+        if "settings" in g_lower or "preferences" in g_lower:
+            pane = "general"
+            for p_key in ("accessibility", "automation", "screen_recording", "microphone", "camera", "full_disk", "bluetooth"):
+                if p_key in g_lower:
+                    pane = p_key
+                    break
+            
+            task_obj = TaskObject(
+                intent="system_settings",
+                target=pane,
+                actions=[TaskAction(type="open_settings", target=pane, parameters={"pane": pane})],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open macOS System Settings to '{pane.replace('_', ' ').capitalize()}'",
+                    tool_name="app_control",
+                    action="open_settings",
+                    parameters={"pane": pane},
+                    expected_outcome=f"Opened System Settings to {pane}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="system_settings",
+                requires_tools=True,
+                summary=f"Navigating to macOS System Settings: {pane}.",
+                steps=steps,
+                verification_criteria="System Settings pane launched.",
+                task_object=task_obj
+            )
+
+        # 0.2. Explicit Playback Command: ONLY when user explicitly asks to "play" or "listen to"
+        # Never trigger playback if user simply asks to "open youtube" or "open safari"
+        is_play_request = any(w in ("play", "listen") for w in words)
+        if is_play_request and any(w in g_lower for w in ("song", "music", "track", "video", "playlist", "youtube", "spotify")):
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            # Extract user's exact query
+            query = "music"
+            m = re.search(r'(?:play|listen to)\s+([^,\.\n]+?)(?:\s+on\s+youtube|\s+in\s+spotify|\s+site|\s*$)', g_lower)
+            if m:
+                query = m.group(1).replace("youtube", "").replace("spotify", "").strip() or "music"
+
+            task_obj = TaskObject(
+                intent="play_music",
+                target=query,
+                actions=[
+                    TaskAction(type="open_service", target="YouTube"),
+                    TaskAction(type="search", query=query),
+                    TaskAction(type="play", query=query)
+                ],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Search YouTube and play '{query}' in {browser}",
                     tool_name="app_control",
                     action="play_media",
                     parameters={"query": query, "browser": browser, "service": "youtube"},
-                    expected_outcome=f"Top track for '{query}' playing on YouTube in {browser}",
+                    expected_outcome=f"Playing '{query}' on YouTube in {browser}",
                     risk_level=1
                 )
             ]
@@ -95,12 +192,87 @@ class MockProvider(LLMProvider):
                 requires_tools=True,
                 summary=f"Searching YouTube for '{query}' and playing top result in {browser}.",
                 steps=steps,
-                verification_criteria="YouTube playback initiated in browser."
+                verification_criteria="YouTube playback initiated in browser.",
+                task_object=task_obj
+            )
+
+        # 0.3. YouTube Search without Autoplay (e.g. "open youtube and search for rajasthani songs")
+        if "youtube" in g_lower and any(w in ("search", "find", "look up") for w in words) and not is_play_request:
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            m_search = re.search(r'(?:search for|find|look up)\s+([^,\.\n]+?)(?:\s+on\s+youtube|\s+site|\s*$)', g_lower)
+            query = m_search.group(1).strip() if m_search else "search"
+            import urllib.parse
+            url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
+            task_obj = TaskObject(
+                intent="search",
+                target="YouTube",
+                actions=[
+                    TaskAction(type="open_service", target="YouTube"),
+                    TaskAction(type="search", query=query, parameters={"url": url})
+                ],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open YouTube search results for '{query}' in {browser}",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": url, "browser": browser},
+                    expected_outcome=f"YouTube search results for '{query}' loaded in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="browser_url",
+                requires_tools=True,
+                summary=f"Searching YouTube for '{query}' in {browser}.",
+                steps=steps,
+                verification_criteria=f"Opened YouTube search for '{query}'.",
+                task_object=task_obj
+            )
+
+        # 0.4. Open Website / YouTube / URL without extra actions (e.g. "open youtube", "open safari", "open google")
+        if "youtube" in g_lower and not is_play_request:
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            url = "https://www.youtube.com"
+            task_obj = TaskObject(
+                intent="open_service",
+                target="YouTube",
+                actions=[TaskAction(type="open_service", target="YouTube", parameters={"url": url, "browser": browser})],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open YouTube ({url}) in {browser}",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": url, "browser": browser},
+                    expected_outcome=f"Opened YouTube in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="browser_url",
+                requires_tools=True,
+                summary=f"Opening YouTube homepage in {browser}.",
+                steps=steps,
+                verification_criteria=f"YouTube homepage opened in {browser}.",
+                task_object=task_obj
             )
 
         # 0.5. Browser New Tab (open chrome new tab, safari new tab)
         if "new tab" in g_lower or ("tab" in words and any(w in ("open", "new", "create") for w in words)):
             browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            task_obj = TaskObject(
+                intent="browser_control",
+                target=browser,
+                actions=[TaskAction(type="open_new_tab", target=browser)],
+                status="pending"
+            )
             steps = [
                 PlanStep(
                     step_id=1,
@@ -118,7 +290,49 @@ class MockProvider(LLMProvider):
                 requires_tools=True,
                 summary=f"Opening a new tab in {browser}.",
                 steps=steps,
-                verification_criteria=f"New tab launched in {browser}."
+                verification_criteria=f"New tab launched in {browser}.",
+                task_object=task_obj
+            )
+
+        # 0.6. Open Project (e.g. "open my ResumeIQ project", "open project ResumeIQ")
+        if "project" in g_lower and any(w in ("open", "switch", "launch") for w in words):
+            proj_name = "project"
+            m_proj = re.search(r'(?:open\s+(?:my\s+)?|switch\s+to\s+(?:my\s+)?)?([a-zA-Z0-9_\-]+)\s+project', g_lower)
+            if m_proj and m_proj.group(1).lower() not in ("the", "a", "my"):
+                proj_name = m_proj.group(1).strip()
+            else:
+                m_proj2 = re.search(r'project\s+([a-zA-Z0-9_\-]+)', g_lower)
+                if m_proj2:
+                    proj_name = m_proj2.group(1).strip()
+                else:
+                    proj_name = "ResumeIQ" if "resumeiq" in g_lower else "workspace"
+
+            task_obj = TaskObject(
+                intent="open_project",
+                target=proj_name,
+                actions=[TaskAction(type="open_project", target=proj_name, parameters={"project_name": proj_name, "editor": "Visual Studio Code"})],
+                dependencies=[TaskDependency(type="application_installed", name="Visual Studio Code")],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Locate and open '{proj_name}' project in Visual Studio Code",
+                    tool_name="app_control",
+                    action="open_project",
+                    parameters={"project_name": proj_name, "editor": "Visual Studio Code"},
+                    expected_outcome=f"Project '{proj_name}' opened in Visual Studio Code",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="project_open",
+                requires_tools=True,
+                summary=f"Locating and opening project '{proj_name}' in Visual Studio Code.",
+                steps=steps,
+                verification_criteria=f"Project '{proj_name}' opened in editor.",
+                task_object=task_obj
             )
 
         # 1. App Control (open application, launch app, close app)
@@ -142,9 +356,18 @@ class MockProvider(LLMProvider):
                         target = next_w.capitalize()
                         break
 
-            # If user specified a website or URL in the app
-            if "youtube" in g_lower or "http" in g_lower or ".com" in g_lower or "site" in g_lower:
-                url = "https://www.youtube.com" if "youtube" in g_lower else "https://google.com"
+            # If user specified a website or URL in the app (e.g. open google.com)
+            if any(k in g_lower for k in ("http", ".com", ".org", ".io", ".net", "site")):
+                m_url = re.search(r'(https?://[^\s]+|[a-zA-Z0-9_-]+\.(?:com|org|io|net))', actual_goal)
+                url = m_url.group(0) if m_url else "https://google.com"
+                if not url.startswith("http"):
+                    url = f"https://{url}"
+                task_obj = TaskObject(
+                    intent="browser_url",
+                    target=url,
+                    actions=[TaskAction(type="open_url", target=url, parameters={"url": url, "browser": target})],
+                    status="pending"
+                )
                 steps = [
                     PlanStep(
                         step_id=1,
@@ -162,10 +385,18 @@ class MockProvider(LLMProvider):
                     requires_tools=True,
                     summary=f"Navigating to {url} in {target}.",
                     steps=steps,
-                    verification_criteria=f"Opened {url} in {target}."
+                    verification_criteria=f"Opened {url} in {target}.",
+                    task_object=task_obj
                 )
 
             action = "close_app" if is_close and not is_open else "open_app"
+            task_obj = TaskObject(
+                intent="close_application" if action == "close_app" else "open_application",
+                target=target,
+                actions=[TaskAction(type=action, target=target, parameters={"app_name": target})],
+                dependencies=[TaskDependency(type="application_installed", name=target)],
+                status="pending"
+            )
             steps = [
                 PlanStep(
                     step_id=1,
@@ -183,7 +414,8 @@ class MockProvider(LLMProvider):
                 requires_tools=True,
                 summary=f"Managing macOS application: {target}.",
                 steps=steps,
-                verification_criteria=f"Application {target} state updated."
+                verification_criteria=f"Application {target} state updated.",
+                task_object=task_obj
             )
 
         # 2. Meeting & Calendar Scheduling
@@ -201,6 +433,12 @@ class MockProvider(LLMProvider):
             if time_match:
                 time_val = time_match.group(1).upper()
 
+            task_obj = TaskObject(
+                intent="create_meeting",
+                target=actual_goal,
+                actions=[TaskAction(type="create_meeting", parameters={"title": actual_goal, "date": date_val, "time": time_val})],
+                status="pending"
+            )
             steps = [
                 PlanStep(
                     step_id=1,
@@ -218,7 +456,8 @@ class MockProvider(LLMProvider):
                 requires_tools=True,
                 summary="Scheduling meeting, generating meeting ID and URL, and updating calendar.",
                 steps=steps,
-                verification_criteria="Meeting link generated and calendar event created."
+                verification_criteria="Meeting link generated and calendar event created.",
+                task_object=task_obj
             )
 
         # 3. Timer & Alarms
@@ -231,6 +470,12 @@ class MockProvider(LLMProvider):
             elif sec_match:
                 minutes_val = max(1, int(sec_match.group(1)) // 60)
 
+            task_obj = TaskObject(
+                intent="set_timer",
+                target=f"{minutes_val} minutes",
+                actions=[TaskAction(type="set_timer", parameters={"minutes": minutes_val, "label": actual_goal})],
+                status="pending"
+            )
             steps = [
                 PlanStep(
                     step_id=1,
@@ -248,7 +493,8 @@ class MockProvider(LLMProvider):
                 requires_tools=True,
                 summary=f"Setting {minutes_val}-minute countdown timer on macOS.",
                 steps=steps,
-                verification_criteria="Timer running in scheduler."
+                verification_criteria="Timer running in scheduler.",
+                task_object=task_obj
             )
 
         # 4. Communication (Email & Message)
@@ -275,6 +521,12 @@ class MockProvider(LLMProvider):
                 "body": actual_goal,
                 "message": actual_goal
             }
+            task_obj = TaskObject(
+                intent=action,
+                target=to_val,
+                actions=[TaskAction(type=action, target=to_val, parameters=params)],
+                status="pending"
+            )
             steps = [
                 PlanStep(
                     step_id=1,
@@ -292,8 +544,10 @@ class MockProvider(LLMProvider):
                 requires_tools=True,
                 summary=f"Dispatching {'email' if action == 'send_email' else 'message'} via macOS client.",
                 steps=steps,
-                verification_criteria="Client opened with draft/message."
+                verification_criteria="Client opened with draft/message.",
+                task_object=task_obj
             )
+
 
         # 5. Project Creation / Coding Request
         if any(w in g_lower for w in ("create", "react", "app", "nova", "build", "frontend")):

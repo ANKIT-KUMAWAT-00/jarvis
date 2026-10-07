@@ -18,6 +18,29 @@ class PlanStep(BaseModel):
     risk_level: int = 1
 
 
+class TaskAction(BaseModel):
+    type: str
+    target: Optional[str] = None
+    query: Optional[str] = None
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskDependency(BaseModel):
+    type: str  # application_installed, macos_permission, network
+    name: str  # Spotify, Accessibility, etc.
+    resolved: bool = False
+    resolution_path: Optional[str] = None
+
+
+class TaskObject(BaseModel):
+    intent: str
+    target: str
+    actions: List[TaskAction] = Field(default_factory=list)
+    dependencies: List[TaskDependency] = Field(default_factory=list)
+    permissions: List[str] = Field(default_factory=list)
+    status: str = "pending"
+
+
 class PlanResult(BaseModel):
     goal: str
     intent: str
@@ -25,6 +48,8 @@ class PlanResult(BaseModel):
     summary: str
     steps: List[PlanStep] = Field(default_factory=list)
     verification_criteria: str
+    task_object: Optional[TaskObject] = None
+
 
 
 class LLMProvider(ABC):

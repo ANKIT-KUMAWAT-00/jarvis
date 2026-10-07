@@ -47,8 +47,8 @@ class IntentClassifier:
         if any(w in p_lower for w in ("timer", "alarm", "countdown")):
             return "ACTIONABLE_COMMAND"
 
-        # Communications (email, message, text, sms, mail)
-        if any(w in p_lower for w in ("send email", "send an email", "send message", "send a message", "email to", "mail to", "message to", "text to", "imessage")):
+        # Communications (call, facetime, email, message, text, sms, mail)
+        if any(w in p_lower for w in ("call ", "facetime ", "ring ", "make a call", "send email", "send an email", "send message", "send a message", "email to", "mail to", "message to", "text to", "imessage")):
             return "ACTIONABLE_COMMAND"
 
         # Coding / Terminal / Engineering / Filesystem
@@ -57,7 +57,7 @@ class IntentClassifier:
 
         # Imperative action verbs starting sentence
         first_word = p_lower.split()[0] if p_lower.split() else ""
-        if first_word in ("open", "launch", "start", "close", "quit", "set", "send", "fix", "schedule", "create", "make", "show", "list", "run"):
+        if first_word in ("open", "launch", "start", "close", "quit", "set", "send", "fix", "schedule", "create", "make", "show", "list", "run", "call", "facetime", "ring"):
             return "ACTIONABLE_COMMAND"
 
         return "GENERAL_CONVERSATION"

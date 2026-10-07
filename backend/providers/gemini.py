@@ -324,14 +324,25 @@ class GeminiProvider(LLMProvider):
         try:
             tools_str = json.dumps(available_tools or [], indent=2)
             system_instruction = (
-                "You are the strategic planning core of JARVIS, a personal autonomous operating layer and engineering partner on macOS.\n"
-                "Decompose user requests into clear, verifiable steps using the available tools.\n"
-                "Key Tool Usage Rules:\n"
-                "- Opening applications (Calculator, Calendar, Safari, Notes, Chrome, Spotify, etc.), URLs, browser tabs, or media: use 'app_control' with actions 'open_app', 'open_url' (params: url, browser), 'open_new_tab' (params: browser, url), or 'play_media' (params: query, browser, service).\n"
-                "- Scheduling meetings, creating Google Meet / Zoom meeting IDs, calendar events, or setting timers: use 'meeting_scheduler' with action 'create_meeting' (params: title, date, time) or 'set_timer' (params: minutes/seconds, label).\n"
-                "- Sending emails or messages (iMessage/SMS): use 'communication' with action 'send_email' (params: to, subject, body) or 'send_message' (params: to, message).\n"
-                "- Filesystem: use 'filesystem' (read_file, write_file, list_dir).\n"
-                "- Shell commands: use 'terminal' (run_command).\n"
+                "You are the strategic planning core of JARVIS, a personal autonomous operating layer and general-purpose intelligent Mac computer agent.\n"
+                "CRITICAL PRINCIPLES:\n"
+                "1. NEVER HARDCODE USER INTENT: Never assume a specific application, song, website, person, or action unless explicitly requested by the user.\n"
+                "2. RESPECT USER INSTRUCTION DEPTH:\n"
+                "   - 'Open YouTube': ONLY open the YouTube homepage (url: 'https://www.youtube.com') via 'app_control.open_url'. Never search or play music.\n"
+                "   - 'Open YouTube and search for X': Open YouTube search results via 'app_control.open_url' (url: 'https://www.youtube.com/results?search_query=X').\n"
+                "   - 'Open YouTube and play X' or 'Play X': Search and play X via 'app_control.play_media' (query: 'X').\n"
+                "3. APPLICATION DISCOVERY & SYSTEM SETTINGS:\n"
+                "   - Launch apps: use 'app_control' with action 'open_app' (params: app_name).\n"
+                "   - Mac App Store: use 'app_control' with action 'open_app_store' (params: app_name).\n"
+                "   - macOS System Settings / Privacy panes: use 'app_control' with action 'open_settings' (params: pane: 'accessibility', 'automation', 'screen_recording', 'microphone', 'camera', 'full_disk', 'bluetooth', or 'general').\n"
+                "   - Open project in editor: use 'app_control' with action 'open_project' (params: project_name).\n"
+                "4. COMMUNICATION:\n"
+                "   - Call contact (e.g. 'Call Krishna'): use 'communication' with action 'make_call' (params: recipient).\n"
+                "   - Specific call app (e.g. 'Call Krishna using WhatsApp'): use action 'make_call' (params: recipient, app: 'WhatsApp').\n"
+                "   - Send message: use 'communication' with action 'send_message' (params: to, message).\n"
+                "   - Send email: use 'communication' with action 'send_email' (params: to, subject, body).\n"
+                "5. STRUCTURED TASK OBJECT:\n"
+                "   Always populate the 'task_object' field with: intent, target, actions, dependencies, permissions, status='pending'.\n"
                 "Never hallucinate tools that do not exist in Available Tools.\n"
                 "Respect action risks: file deletions and destructive commands require Level 3."
             )
@@ -340,7 +351,8 @@ class GeminiProvider(LLMProvider):
                 f"User Goal: {goal}\n\n"
                 f"Context:\n{context or 'No extra context'}\n\n"
                 f"Available Tools:\n{tools_str}\n\n"
-                f"Generate a structured PlanResult for this goal. In the goal field of PlanResult, put ONLY the user goal string."
+                f"Generate a structured PlanResult for this goal. In the goal field of PlanResult, put ONLY the user goal string. "
+                f"Include a populated task_object representing the dynamic task structure."
             )
             return await self.generate_structured(prompt, PlanResult, system_instruction=system_instruction)
         except Exception as e:
