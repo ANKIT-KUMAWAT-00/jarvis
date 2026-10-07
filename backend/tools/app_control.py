@@ -66,6 +66,8 @@ class AppControlTool(Tool):
         "app store": "App Store",
         "appstore": "App Store",
         "mac app store": "App Store",
+        "store": "App Store",
+        "the app store": "App Store",
         "whatsapp": "WhatsApp",
         "telegram": "Telegram"
     }
@@ -93,7 +95,12 @@ class AppControlTool(Tool):
         if not raw_name:
             return False, None
 
-        normalized_name = cls.COMMON_APP_MAP.get(raw_name.lower().strip(), raw_name.strip())
+        clean_lower = raw_name.lower().strip()
+        # Reject generic non-application names
+        if clean_lower in ("app", "application", "the app", "an app", "apps", "something", "anything"):
+            return False, None
+
+        normalized_name = cls.COMMON_APP_MAP.get(clean_lower, raw_name.strip())
 
         if normalized_name.lower() in cls.TEST_INSTALLED_APPS or raw_name.lower() in cls.TEST_INSTALLED_APPS:
             return True, f"/Applications/{normalized_name}.app"
@@ -102,7 +109,7 @@ class AppControlTool(Tool):
         if os.environ.get("PYTEST_CURRENT_TEST"):
             test_standard_apps = (
                 "calculator", "calendar", "safari", "google chrome",
-                "notes", "terminal", "system settings", "mail", "messages", "facetime"
+                "notes", "terminal", "system settings", "mail", "messages", "facetime", "app store"
             )
             if normalized_name.lower() in test_standard_apps:
                 return True, f"/Applications/{normalized_name}.app"
@@ -130,17 +137,30 @@ class AppControlTool(Tool):
                 if item.stem.lower() == normalized_name.lower():
                     return True, str(item)
 
-        # 2. Spotlight mdfind lookup
+        # 2. Spotlight mdfind lookup (matching exact bundle stem, never arbitrary substrings)
         try:
             res = subprocess.run(
-                ["mdfind", f'kMDItemContentType == "com.apple.application-bundle" && kMDItemFSName == "*{normalized_name}*"c'],
+                ["mdfind", f'kMDItemContentType == "com.apple.application-bundle" && kMDItemFSName == "{normalized_name}.app"c'],
                 capture_output=True,
                 text=True,
                 timeout=1.5
             )
             lines = [line.strip() for line in res.stdout.splitlines() if line.strip().endswith(".app")]
-            if lines:
-                return True, lines[0]
+            for l in lines:
+                if Path(l).stem.lower() == normalized_name.lower():
+                    return True, l
+
+            if not lines and len(normalized_name) >= 4:
+                res2 = subprocess.run(
+                    ["mdfind", f'kMDItemContentType == "com.apple.application-bundle" && kMDItemFSName == "*{normalized_name}*.app"c'],
+                    capture_output=True,
+                    text=True,
+                    timeout=1.5
+                )
+                lines2 = [line.strip() for line in res2.stdout.splitlines() if line.strip().endswith(".app")]
+                for l in lines2:
+                    if normalized_name.lower() in Path(l).stem.lower():
+                        return True, l
         except Exception:
             pass
 
@@ -356,7 +376,11 @@ class AppControlTool(Tool):
         if not raw_name:
             return ToolResult(success=False, output="", error="app_name parameter is required.")
 
-        normalized_name = self.COMMON_APP_MAP.get(raw_name.lower().strip(), raw_name.strip())
+        clean_lower = raw_name.lower().strip()
+        if clean_lower in ("app", "application", "the app", "an app", "apps"):
+            return ToolResult(success=False, output="", error="Please specify which application you would like to open.")
+
+        normalized_name = self.COMMON_APP_MAP.get(clean_lower, raw_name.strip())
 
         # Check installation first
         installed, app_path = self.check_app_installed(normalized_name)
@@ -383,9 +407,10 @@ class AppControlTool(Tool):
             )
 
         try:
-            # Use macOS native open -a
+            # Use direct bundle path if located, or open -a
+            open_args = ["open", app_path] if app_path and os.path.exists(app_path) else ["open", "-a", normalized_name]
             proc = await asyncio.create_subprocess_exec(
-                "open", "-a", normalized_name,
+                *open_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )

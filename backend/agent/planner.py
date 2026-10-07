@@ -55,6 +55,16 @@ class IntentClassifier:
         if any(w in p_lower for w in ("create", "build", "run", "fix", "test", "inspect", "compile", "install", "refactor", "commit", "delete", "write", "list files", "show files", "execute")):
             return "ENGINEERING_ACTION"
 
+        # Retry / Continuation / Confirmation triggers
+        retry_phrases = (
+            "just go for it", "go for it", "just do it", "do it",
+            "try again", "retry", "try it again", "proceed", "go ahead",
+            "don't give me excuses", "no excuses", "carry on", "keep going",
+            "ask for permission", "ask me for permission", "ask for the permission"
+        )
+        if any(phrase in p_lower for phrase in retry_phrases):
+            return "ACTIONABLE_COMMAND"
+
         # Imperative action verbs starting sentence
         first_word = p_lower.split()[0] if p_lower.split() else ""
         if first_word in ("open", "launch", "start", "close", "quit", "set", "send", "fix", "schedule", "create", "make", "show", "list", "run", "call", "facetime", "ring"):
@@ -81,9 +91,9 @@ class Planner:
             fast_plan = await local_mock.plan(goal, context=context, available_tools=available_tools)
             handled_intents = (
                 "media_playback", "browser_control", "browser_url",
-                "meeting_scheduling", "timer", "communication"
+                "meeting_scheduling", "timer", "communication", "open_app_store"
             )
-            # If fast plan explicitly recognized media playback or browser tab control, return it
+            # If fast plan explicitly recognized media playback, browser, app store, or communication, return it
             if fast_plan.intent in handled_intents and fast_plan.steps:
                 return fast_plan
 

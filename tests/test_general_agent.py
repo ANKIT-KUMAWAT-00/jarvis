@@ -187,3 +187,53 @@ async def test_task_object_structure():
     assert plan_play.task_object is not None
     assert plan_play.task_object.intent == "play_music"
     assert len(plan_play.task_object.actions) >= 2
+
+
+@pytest.mark.asyncio
+async def test_open_app_store_and_download_whatsapp(agent):
+    """'Open the App Store and download the WhatsApp' targets the App Store page for WhatsApp directly."""
+    res = await agent.run("Open the App Store and download the WhatsApp")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "open_app_store"
+    assert step["parameters"]["app_name"].lower() == "whatsapp"
+
+
+@pytest.mark.asyncio
+async def test_generic_app_name_rejection():
+    """Generic words like 'App' or 'Store' must never be treated as valid macOS applications."""
+    for generic in ("App", "app", "application", "the app", "Store", "apps"):
+        installed, path = AppControlTool.check_app_installed(generic)
+        if generic.lower() not in ("store",):  # 'store' maps to 'App Store'
+            assert installed is False
+            assert path is None
+
+
+@pytest.mark.asyncio
+async def test_retry_last_task_on_go_for_it(agent):
+    """When user commands 'Don't give me excuses just go for it', re-execute the previous task."""
+    # First execute an initial command
+    res1 = await agent.run("Open YouTube")
+    assert res1["state"] == "COMPLETED"
+    assert len(agent.recent_task_records) == 1
+
+    # Follow up with 'Don't give me excuses just go for it'
+    res2 = await agent.run("Don't give me excuses just go for it")
+    assert res2["state"] == "COMPLETED"
+    assert res2["verified"] is True
+    # The last recorded goal should still be Open YouTube
+    assert agent.recent_task_records[-1]["goal"] == "Open YouTube"
+
+
+@pytest.mark.asyncio
+async def test_app_store_approval_with_go_for_it(agent):
+    """When waiting for App Store approval, 'just go for it' approves and opens the App Store."""
+    res1 = await agent.run("Call Krishna using WhatsApp")
+    assert res1["state"] == "WAITING_FOR_APP_STORE_APPROVAL"
+
+    res2 = await agent.run("just go for it")
+    assert res2["state"] == "WAITING_FOR_INSTALLATION"
+    assert "opened the Mac App Store page" in res2["response"]

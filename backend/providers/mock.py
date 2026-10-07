@@ -335,26 +335,98 @@ class MockProvider(LLMProvider):
                 task_object=task_obj
             )
 
+        # 0.7. App Store / Download from Store (e.g. "open the app store", "open app store and download whatsapp")
+        if "app store" in g_lower or "appstore" in g_lower or ("store" in words and any(w in ("app", "download", "install", "get") for w in words)):
+            app_to_download = None
+            m_dl = re.search(r'(?:download|install|find|search for|get)\s+(?:the\s+)?([a-zA-Z0-9_\s]+)', g_lower)
+            if m_dl:
+                cand = m_dl.group(1).strip()
+                if cand not in ("any app", "an app", "apps", "app", "application", "something", "anything"):
+                    clean_cand = cand.split(" and ")[0].split(" then ")[0].strip().title()
+                    if clean_cand and clean_cand.lower() not in ("any app", "an app", "app"):
+                        app_to_download = clean_cand
+
+            if app_to_download:
+                task_obj = TaskObject(
+                    intent="open_app_store",
+                    target=app_to_download,
+                    actions=[TaskAction(type="open_app_store", target=app_to_download, parameters={"app_name": app_to_download})],
+                    status="pending"
+                )
+                steps = [
+                    PlanStep(
+                        step_id=1,
+                        title=f"Open Mac App Store page for '{app_to_download}'",
+                        tool_name="app_control",
+                        action="open_app_store",
+                        parameters={"app_name": app_to_download},
+                        expected_outcome=f"Mac App Store navigated to '{app_to_download}'",
+                        risk_level=1
+                    )
+                ]
+                return PlanResult(
+                    goal=actual_goal,
+                    intent="open_app_store",
+                    requires_tools=True,
+                    summary=f"Opening Mac App Store page for '{app_to_download}'.",
+                    steps=steps,
+                    verification_criteria=f"App Store navigated to '{app_to_download}'.",
+                    task_object=task_obj
+                )
+            else:
+                task_obj = TaskObject(
+                    intent="open_application",
+                    target="App Store",
+                    actions=[TaskAction(type="open_app", target="App Store", parameters={"app_name": "App Store"})],
+                    status="pending"
+                )
+                steps = [
+                    PlanStep(
+                        step_id=1,
+                        title="Launch App Store",
+                        tool_name="app_control",
+                        action="open_app",
+                        parameters={"app_name": "App Store"},
+                        expected_outcome="App Store opened",
+                        risk_level=1
+                    )
+                ]
+                return PlanResult(
+                    goal=actual_goal,
+                    intent="app_control",
+                    requires_tools=True,
+                    summary="Launching Mac App Store.",
+                    steps=steps,
+                    verification_criteria="App Store running.",
+                    task_object=task_obj
+                )
+
         # 1. App Control (open application, launch app, close app)
         is_close = any(w in ("close", "quit", "exit", "terminate", "kill", "stop") for w in words)
         is_open = any(w in ("open", "launch", "start") for w in words)
 
         if (is_open or is_close) and not any(w in g_lower for w in ("project file", "issue", "meeting", "calendar", "mail to", "message to")):
-            target = "Calculator"
-            for candidate in ("calculator", "calendar", "safari", "chrome", "notes", "clock", "spotify", "mail", "messages", "terminal"):
-                if candidate in g_lower:
-                    target = candidate.capitalize()
+            target = None
+            from backend.tools.app_control import AppControlTool
+            sorted_apps = sorted(AppControlTool.COMMON_APP_MAP.keys(), key=lambda k: len(k), reverse=True)
+            for cand in sorted_apps:
+                if cand in g_lower:
+                    target = AppControlTool.COMMON_APP_MAP[cand]
                     break
+
             # If explicit name given after open/launch/close/quit
-            for i, w in enumerate(words):
-                if w in ("open", "launch", "start", "close", "quit") and i + 1 < len(words):
-                    next_w = words[i + 1]
-                    if next_w in ("the", "a", "an", "app", "application") and i + 2 < len(words):
-                        target = words[i + 2].capitalize()
-                        break
-                    elif next_w not in ("the", "a", "an", "app", "application"):
-                        target = next_w.capitalize()
-                        break
+            if not target:
+                for i, w in enumerate(words):
+                    if w in ("open", "launch", "start", "close", "quit") and i + 1 < len(words):
+                        idx = i + 1
+                        while idx < len(words) and words[idx] in ("the", "a", "an", "app", "application"):
+                            idx += 1
+                        if idx < len(words) and words[idx] not in ("app", "application", "something", "anything"):
+                            target = words[idx].capitalize()
+                            break
+
+            if not target:
+                target = "Safari"
 
             # If user specified a website or URL in the app (e.g. open google.com)
             if any(k in g_lower for k in ("http", ".com", ".org", ".io", ".net", "site")):

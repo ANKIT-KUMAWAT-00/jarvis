@@ -34,6 +34,10 @@ Situational Awareness & Continuous Learning:
 - You maintain multi-turn memory of user conversations, recent task executions, and previous outputs.
 - When asked about previous outputs, repeated requests, or ongoing context, refer to your recent history and executed tasks.
 - Actively learn from user corrections: review LEARNED_CORRECTIONS and never repeat past mistakes or incomplete actions.
+Mac OS Capabilities & System Applications:
+- The Mac App Store is a standard built-in macOS application located at '/System/Applications/App Store.app'. Never claim the App Store cannot be located or launched.
+- You have full capability to launch applications, open URLs, and open macOS System Settings panes when permissions are required.
+- If a task requires macOS permissions, request them or open the relevant macOS Settings pane.
 """
 
 
@@ -182,7 +186,7 @@ class JarvisAgent:
                 waiting_for = self.pending_task.get("waiting_for")
 
                 if waiting_for == "app_store_approval":
-                    if any(w in p_lower for w in ("yes", "y", "sure", "ok", "please", "open app store", "open it", "install", "yeah", "yep", "do it")):
+                    if any(w in p_lower for w in ("yes", "y", "sure", "ok", "please", "open app store", "open it", "install", "yeah", "yep", "do it", "go for it", "just go for it", "just do it", "proceed", "go ahead", "open", "don't give me excuses")):
                         await self.tool_registry.execute_tool("app_control", {"action": "open_app_store", "app_name": app_name})
                         self.pending_task["waiting_for"] = "installation_complete"
                         store_reply = (
@@ -218,10 +222,26 @@ class JarvisAgent:
 
             # 3. macOS Permission grant completion
             elif self.pending_task.get("type") == "MAC_PERMISSION":
-                if any(w in p_lower for w in ("done", "enabled", "granted", "i enabled it", "continue", "resume", "retry", "yes", "ok", "finished")):
+                if any(w in p_lower for w in ("done", "enabled", "granted", "i enabled it", "continue", "resume", "retry", "yes", "ok", "finished", "go for it", "just do it", "just go for it", "proceed")):
                     orig_goal = self.pending_task["original_goal"]
                     self.pending_task = None
                     return await self._handle_multi_step_task(orig_goal)
+
+        # Check for explicit retry / continuation of previous failed or completed task
+        p_lower = user_clean.lower().strip()
+        retry_keywords = (
+            "just go for it", "go for it", "just do it", "do it",
+            "try again", "retry", "try it again", "do it again",
+            "don't give me excuses", "no excuses", "go ahead and do it",
+            "ask for me for the permission", "ask for permission",
+            "ask me for permission", "ask for the permission"
+        )
+        if any(k in p_lower for k in retry_keywords) and self.recent_task_records:
+            last_record = self.recent_task_records[-1]
+            last_goal = last_record.get("goal")
+            if last_goal:
+                await self._emit_event("THINKING", {"prompt": f"Re-executing task: {last_goal}"})
+                return await self._handle_multi_step_task(last_goal)
 
         # 1. Intent Classification
         intent = IntentClassifier.classify(user_clean)

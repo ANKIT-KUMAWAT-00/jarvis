@@ -309,7 +309,7 @@ document.addEventListener('DOMContentLoaded', () => {
       visualCore.setState('ERROR');
       playChime('alert');
       if (taskStateBadge) taskStateBadge.textContent = 'FAILED';
-      appendDialogueMessage('jarvis', event.message);
+      renderAndSpeakJarvisResponse(event.message);
     }
   }
 
@@ -475,8 +475,22 @@ document.addEventListener('DOMContentLoaded', () => {
     activityStream.scrollTop = activityStream.scrollHeight;
   }
 
-  // 12. Dialogue Message Appender
+  // 12. Dialogue Message Appender with Deduplication
+  let lastAppendedMessage = { sender: '', text: '', time: 0 };
+
   function appendDialogueMessage(sender, text) {
+    if (!text || !text.trim()) return;
+    const cleanText = text.trim();
+    const now = Date.now();
+    // Prevent duplicate dialogue bubbles for the same sender within 3.5 seconds
+    if (lastAppendedMessage.sender === sender && 
+        lastAppendedMessage.text === cleanText && 
+        (now - lastAppendedMessage.time < 3500)) {
+      console.log('Suppressed duplicate dialogue message:', sender, cleanText);
+      return;
+    }
+    lastAppendedMessage = { sender, text: cleanText, time: now };
+
     const article = document.createElement('article');
     article.className = `msg msg-${sender}`;
     const avatarLetter = sender === 'jarvis' ? 'J' : 'U';
@@ -486,7 +500,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="msg-avatar">${avatarLetter}</div>
       <div class="msg-body">
         <div class="msg-meta">${meta}</div>
-        <div class="msg-content">${escapeHtml(text)}</div>
+        <div class="msg-content">${escapeHtml(cleanText)}</div>
       </div>
     `;
     dialogueContainer.appendChild(article);
