@@ -37,7 +37,7 @@ class JarvisConfig(BaseModel):
     gemini_backup_api_key_6: str = Field(default="", description="Backup Google Gemini API key #7")
     gemini_backup_api_key_7: str = Field(default="", description="Backup Google Gemini API key #8")
     gemini_backup_api_key_8: str = Field(default="", description="Backup Google Gemini API key #9")
-    gemini_model: str = Field(default="gemini-3.5-flash", description="Configured Gemini model")
+    gemini_model: str = Field(default="gemini-2.5-flash", description="Configured Gemini model")
     
     # Workspace & Filesystem Boundaries
     workspace_root: Path = Field(default=PROJECT_ROOT, description="Primary safe workspace boundary")
@@ -130,7 +130,7 @@ class JarvisConfig(BaseModel):
             gemini_backup_api_key_6=os.getenv("GEMINI_BACKUP_API_KEY_6", ""),
             gemini_backup_api_key_7=os.getenv("GEMINI_BACKUP_API_KEY_7", ""),
             gemini_backup_api_key_8=os.getenv("GEMINI_BACKUP_API_KEY_8", ""),
-            gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
+            gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
             workspace_root=workspace,
             notes_dir=notes,
             max_agent_steps=int(os.getenv("MAX_AGENT_STEPS", "20")),

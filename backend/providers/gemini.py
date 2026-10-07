@@ -1,13 +1,16 @@
 """
 JARVIS Google Gemini Provider
-Integrates the official Google GenAI SDK with structured outputs, multimodal vision,
-and multi-key pooling with automatic failover on rate limits (429) or spikes (503).
+High-performance asynchronous integration with official Google GenAI SDK.
+Features sub-second latency tuning, true async calls (client.aio),
+dead-key pruning, strict timeouts, and multi-key pooling with automatic failover.
 """
 
 import os
 import json
 import base64
 import logging
+import asyncio
+import time
 from typing import List, Dict, Any, Optional, Type, Union
 from pydantic import BaseModel
 from .base import LLMProvider, PlanResult, PlanStep
@@ -15,16 +18,20 @@ from backend.security.guardrails import PromptInjectionGuard
 
 logger = logging.getLogger("jarvis.gemini")
 
+CHAT_TIMEOUT_SECONDS = 8.0
+STRUCTURED_TIMEOUT_SECONDS = 12.0
+VALIDATION_TIMEOUT_SECONDS = 4.0
+
 
 class GeminiProvider(LLMProvider):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_name: str = "gemini-3.8-flash",
+        model_name: str = "gemini-2.5-flash",
         api_keys: Optional[Union[List[str], str]] = None,
         backup_keys: Optional[Union[List[str], str]] = None
     ):
-        self.model_name = model_name.strip() if model_name else "gemini-3.8-flash"
+        self.model_name = model_name.strip() if model_name else "gemini-2.5-flash"
         
         # Collect all unique, valid keys in priority order
         collected_keys: List[str] = []
@@ -52,11 +59,13 @@ class GeminiProvider(LLMProvider):
         self.current_key_index = 0
         self.api_key = self.api_keys[0] if self.api_keys else ""
         self._clients: Dict[int, Any] = {}
+        self._dead_keys: set[int] = set()
 
     def get_model_name(self) -> str:
         if len(self.api_keys) > 1:
             return f"{self.model_name} (Pool: {len(self.api_keys)} keys, Active: #{self.current_key_index + 1})"
         return self.model_name
+
 
     def is_configured(self) -> bool:
         return bool(self.api_keys and any(len(k) > 10 for k in self.api_keys))
@@ -74,10 +83,20 @@ class GeminiProvider(LLMProvider):
         return self._clients.get(self.current_key_index)
 
     def rotate_key(self, reason: str = "") -> bool:
-        """Rotate to next available API key in the pool."""
+        """Rotate to next available API key in the pool, preferring healthy keys."""
         if len(self.api_keys) > 1:
             prev_idx = self.current_key_index
-            self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
+            found = False
+            for step in range(1, len(self.api_keys)):
+                candidate = (prev_idx + step) % len(self.api_keys)
+                if candidate not in self._dead_keys:
+                    self.current_key_index = candidate
+                    found = True
+                    break
+            if not found:
+                # If all marked dead, standard round robin
+                self.current_key_index = (prev_idx + 1) % len(self.api_keys)
+
             self.api_key = self.api_keys[self.current_key_index]
             logger.warning(
                 f"[JARVIS KeyFailover] Rotated Gemini API key: #{prev_idx + 1} -> #{self.current_key_index + 1}. Reason: {reason}"
@@ -86,44 +105,37 @@ class GeminiProvider(LLMProvider):
         return False
 
     async def validate_connection(self) -> tuple[bool, str]:
-        """Test API connection across the configured key pool."""
+        """Test API connection across the configured key pool using fast async ping."""
         if not self.is_configured():
             return False, "GEMINI_API_KEY is not configured in environment or .env."
 
-        from google.genai import types
-
         pool_status = []
         for idx in range(len(self.api_keys)):
+            if idx in self._dead_keys:
+                pool_status.append(f"Key #{idx + 1}: Skipped (marked dead)")
+                continue
+
             self.current_key_index = idx
             client = self.get_active_client()
             if not client:
+                self._dead_keys.add(idx)
                 pool_status.append(f"Key #{idx + 1}: Client init failed")
                 continue
             try:
-                response = client.models.generate_content(
-                    model=self.model_name,
-                    contents="Respond with: PONG"
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=self.model_name,
+                        contents="Respond with: PONG"
+                    ),
+                    timeout=VALIDATION_TIMEOUT_SECONDS
                 )
                 if response and (response.text or response.candidates):
                     self.api_key = self.api_keys[idx]
                     return True, f"Successfully connected to Gemini model '{self.model_name}' using Key #{idx + 1} of {len(self.api_keys)}."
             except Exception as e:
                 err_str = str(e)
-                # If 503 high demand or 404, try gemini-3.5-flash-lite
-                if any(ind in err_str for ind in ("503", "UNAVAILABLE", "404", "high demand")):
-                    for fallback in ("gemini-3.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.8-flash"):
-                        if fallback != self.model_name:
-                            try:
-                                resp2 = client.models.generate_content(
-                                    model=fallback,
-                                    contents="Respond with: PONG"
-                                )
-                                if resp2 and (resp2.text or resp2.candidates):
-                                    self.model_name = fallback
-                                    self.api_key = self.api_keys[idx]
-                                    return True, f"Successfully connected to Gemini model '{self.model_name}' using Key #{idx + 1} of {len(self.api_keys)}."
-                            except Exception:
-                                continue
+                if "404" in err_str or "NOT_FOUND" in err_str:
+                    self._dead_keys.add(idx)
                 pool_status.append(f"Key #{idx + 1}: {err_str[:60]}")
 
         return False, f"All {len(self.api_keys)} Gemini keys failed: {'; '.join(pool_status)}"
@@ -159,44 +171,44 @@ class GeminiProvider(LLMProvider):
         last_err = None
 
         for attempt in range(total_keys):
+            if self.current_key_index in self._dead_keys:
+                if not self.rotate_key("Skipping dead key"):
+                    break
+
             client = self.get_active_client()
             if not client:
+                self._dead_keys.add(self.current_key_index)
                 self.rotate_key("Client init failed")
                 continue
+
             try:
-                response = client.models.generate_content(
-                    model=self.model_name,
-                    contents=contents,
-                    config=config
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=self.model_name,
+                        contents=contents,
+                        config=config
+                    ),
+                    timeout=CHAT_TIMEOUT_SECONDS
                 )
                 return response.text or ""
             except Exception as e:
                 err_str = str(e)
                 last_err = e
-                # Check for 503 high demand or 404 model migration -> try stable models
-                if any(ind in err_str for ind in ("503", "UNAVAILABLE", "404", "high demand")):
-                    for fallback in ("gemini-3.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.8-flash"):
-                        if fallback != self.model_name:
-                            try:
-                                response = client.models.generate_content(
-                                    model=fallback,
-                                    contents=contents,
-                                    config=config
-                                )
-                                self.model_name = fallback
-                                return response.text or ""
-                            except Exception as e2:
-                                err_str = str(e2)
-                                last_err = e2
+                # If model is 404/not available on this key, mark dead and rotate instantly
+                if "404" in err_str or "NOT_FOUND" in err_str:
+                    self._dead_keys.add(self.current_key_index)
+                    self.rotate_key(f"Model {self.model_name} 404 on key #{self.current_key_index + 1}")
+                    continue
 
-                # If rate-limited or transient upstream error, rotate to next key in pool
-                if (self._is_upstream_temporary_error(err_str) or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str) and attempt < total_keys - 1:
-                    self.rotate_key(f"Limit/Quota on key #{self.current_key_index + 1}")
+                # If timeout or temporary quota/rate-limit, rotate to next healthy key
+                if (isinstance(e, asyncio.TimeoutError) or self._is_upstream_temporary_error(err_str) or "429" in err_str) and attempt < total_keys - 1:
+                    reason = f"Timeout (>{CHAT_TIMEOUT_SECONDS}s)" if isinstance(e, asyncio.TimeoutError) else f"Limit/Demand on key #{self.current_key_index + 1}"
+                    self.rotate_key(reason)
                     continue
                 break
 
         # Fallback to local engine if all keys exhausted
-        if last_err and self._is_upstream_temporary_error(str(last_err)):
+        if last_err and (isinstance(last_err, asyncio.TimeoutError) or self._is_upstream_temporary_error(str(last_err))):
             from .mock import MockProvider
             mock = MockProvider()
             mock_reply = await mock.chat(messages, system_instruction=system_instruction, temperature=temperature)
@@ -208,7 +220,7 @@ class GeminiProvider(LLMProvider):
                     "Add credits to your account or feed me another fresh key before I go completely dark."
                 )
             else:
-                warning_prefix = "Sir, Google Gemini is temporarily experiencing high demand (503 spike). I have routed your instruction through the local execution engine."
+                warning_prefix = "Sir, Google Gemini is temporarily experiencing high latency or demand. I have routed your instruction through the local execution engine."
             return (
                 f"{warning_prefix}\n\n"
                 f"{mock_reply}"
@@ -219,7 +231,7 @@ class GeminiProvider(LLMProvider):
     def _is_upstream_temporary_error(err_str: str) -> bool:
         indicators = (
             "429", "RESOURCE_EXHAUSTED", "Quota exceeded", "503", "UNAVAILABLE",
-            "500", "INTERNAL", "high demand", "deadline exceeded", "overloaded"
+            "500", "INTERNAL", "high demand", "deadline exceeded", "overloaded", "timeout"
         )
         return any(ind.lower() in err_str.lower() for ind in indicators)
 
@@ -253,15 +265,24 @@ class GeminiProvider(LLMProvider):
         last_err = None
 
         for attempt in range(total_keys):
+            if self.current_key_index in self._dead_keys:
+                if not self.rotate_key("Skipping dead key"):
+                    break
+
             client = self.get_active_client()
             if not client:
+                self._dead_keys.add(self.current_key_index)
                 self.rotate_key("Client init failed")
                 continue
+
             try:
-                response = client.models.generate_content(
-                    model=self.model_name,
-                    contents=full_prompt,
-                    config=config
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=self.model_name,
+                        contents=full_prompt,
+                        config=config
+                    ),
+                    timeout=STRUCTURED_TIMEOUT_SECONDS
                 )
                 raw_text = response.text.strip()
                 if raw_text.startswith("```json"):
@@ -277,37 +298,18 @@ class GeminiProvider(LLMProvider):
             except Exception as e:
                 err_str = str(e)
                 last_err = e
-                # Check for 503 high demand or 404 model migration -> try stable models
-                if any(ind in err_str for ind in ("503", "UNAVAILABLE", "404", "high demand")):
-                    for fallback in ("gemini-3.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.8-flash"):
-                        if fallback != self.model_name:
-                            try:
-                                self.model_name = fallback
-                                response = client.models.generate_content(
-                                    model=self.model_name,
-                                    contents=full_prompt,
-                                    config=config
-                                )
-                                raw_text = response.text.strip()
-                                if raw_text.startswith("```json"):
-                                    raw_text = raw_text[7:]
-                                if raw_text.startswith("```"):
-                                    raw_text = raw_text[3:]
-                                if raw_text.endswith("```"):
-                                    raw_text = raw_text[:-3]
-                                raw_text = raw_text.strip()
-                                parsed_data = json.loads(raw_text)
-                                return schema_class.model_validate(parsed_data)
-                            except Exception as e2:
-                                err_str = str(e2)
-                                last_err = e2
+                if "404" in err_str or "NOT_FOUND" in err_str:
+                    self._dead_keys.add(self.current_key_index)
+                    self.rotate_key(f"Model {self.model_name} 404 on key #{self.current_key_index + 1}")
+                    continue
 
-                if (self._is_upstream_temporary_error(err_str) or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str) and attempt < total_keys - 1:
-                    self.rotate_key(f"Limit/Quota on key #{self.current_key_index + 1}")
+                if (isinstance(e, asyncio.TimeoutError) or self._is_upstream_temporary_error(err_str) or "429" in err_str) and attempt < total_keys - 1:
+                    reason = f"Timeout (>{STRUCTURED_TIMEOUT_SECONDS}s)" if isinstance(e, asyncio.TimeoutError) else f"Limit/Demand on key #{self.current_key_index + 1}"
+                    self.rotate_key(reason)
                     continue
                 break
 
-        if last_err and self._is_upstream_temporary_error(str(last_err)):
+        if last_err and (isinstance(last_err, asyncio.TimeoutError) or self._is_upstream_temporary_error(str(last_err))):
             from .mock import MockProvider
             mock = MockProvider()
             return await mock.generate_structured(prompt, schema_class, system_instruction=system_instruction)
@@ -343,7 +345,7 @@ class GeminiProvider(LLMProvider):
             return await self.generate_structured(prompt, PlanResult, system_instruction=system_instruction)
         except Exception as e:
             err_str = str(e)
-            if self._is_upstream_temporary_error(err_str):
+            if isinstance(e, asyncio.TimeoutError) or self._is_upstream_temporary_error(err_str):
                 from .mock import MockProvider
                 mock = MockProvider()
                 return await mock.plan(goal, context=context, available_tools=available_tools)
@@ -377,22 +379,37 @@ class GeminiProvider(LLMProvider):
         last_err = None
 
         for attempt in range(total_keys):
+            if self.current_key_index in self._dead_keys:
+                if not self.rotate_key("Skipping dead key"):
+                    break
+
             client = self.get_active_client()
             if not client:
+                self._dead_keys.add(self.current_key_index)
                 self.rotate_key("Client init failed")
                 continue
+
             try:
-                response = client.models.generate_content(
-                    model=self.model_name,
-                    contents=parts,
-                    config=config
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=self.model_name,
+                        contents=parts,
+                        config=config
+                    ),
+                    timeout=STRUCTURED_TIMEOUT_SECONDS
                 )
                 return response.text or ""
             except Exception as e:
                 err_str = str(e)
                 last_err = e
-                if (self._is_upstream_temporary_error(err_str) or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str) and attempt < total_keys - 1:
-                    self.rotate_key(f"Limit/Quota on key #{self.current_key_index + 1}")
+                if "404" in err_str or "NOT_FOUND" in err_str:
+                    self._dead_keys.add(self.current_key_index)
+                    self.rotate_key(f"Model {self.model_name} 404 on key #{self.current_key_index + 1}")
+                    continue
+
+                if (isinstance(e, asyncio.TimeoutError) or self._is_upstream_temporary_error(err_str) or "429" in err_str) and attempt < total_keys - 1:
+                    reason = f"Timeout (>{STRUCTURED_TIMEOUT_SECONDS}s)" if isinstance(e, asyncio.TimeoutError) else f"Limit/Demand on key #{self.current_key_index + 1}"
+                    self.rotate_key(reason)
                     continue
                 break
 
