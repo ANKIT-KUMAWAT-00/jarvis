@@ -536,8 +536,8 @@ class AppControlTool(Tool):
             search_url = f"https://www.youtube.com/results?search_query={encoded_query}"
             video_url = search_url
 
-            # Query YouTube search results via curl to extract first video ID
-            cmd = f'curl -s -L "{search_url}" | grep -o \'/watch?v=[a-zA-Z0-9_-]\\{{11\\}}\' | head -n 1'
+            # Query YouTube search results via fast curl to extract first video ID
+            cmd = f'curl -s -L --max-time 2.5 -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" "{search_url}" | grep -o \'/watch?v=[a-zA-Z0-9_-]\\{{11\\}}\' | head -n 1'
             proc = await asyncio.create_subprocess_shell(
                 cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -556,6 +556,15 @@ class AppControlTool(Tool):
                 stderr=asyncio.subprocess.PIPE
             )
             await proc_launch.communicate()
+
+            # Activate browser to front so user sees/hears it immediately
+            try:
+                proc_act = await asyncio.create_subprocess_exec(
+                    "osascript", "-e", f'tell application "{norm_browser}" to activate'
+                )
+                await proc_act.communicate()
+            except Exception:
+                pass
 
             return ToolResult(
                 success=True,

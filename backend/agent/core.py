@@ -94,7 +94,9 @@ class JarvisAgent:
             "that's wrong", "that was wrong", "you made a mistake", "that didn't work", "did not work",
             "didn't do anything", "haven't done anything", "stop doing that", "you forgot", "why did you",
             "that is not what i asked", "not what i asked", "wrong output", "false", "incomplete",
-            "you are not listening", "not doing the task", "acting like a chatbot", "forgetting", "forgot"
+            "you are not listening", "not doing the task", "acting like a chatbot", "forgetting", "forgot",
+            "not working", "not wroking", "responded only", "only responded", "saying but not working",
+            "saying but it is not", "didn't play", "not playing", "didn't open", "haven't opened"
         )
         return any(ind in t_lower for ind in indicators)
 
@@ -242,6 +244,35 @@ class JarvisAgent:
             if last_goal:
                 await self._emit_event("THINKING", {"prompt": f"Re-executing task: {last_goal}"})
                 return await self._handle_multi_step_task(last_goal)
+
+        # Unfulfilled task execution when user reports JARVIS didn't do the task
+        if self._detect_user_correction(user_clean):
+            last_unfulfilled_goal = None
+            if self.recent_task_records:
+                last_unfulfilled_goal = self.recent_task_records[-1].get("goal")
+            if not last_unfulfilled_goal and self.conversation_history:
+                for msg in reversed(self.conversation_history):
+                    if msg.get("role") == "user":
+                        candidate = msg.get("content", "").strip()
+                        if candidate and not self._detect_user_correction(candidate):
+                            last_unfulfilled_goal = candidate
+                            break
+            if last_unfulfilled_goal:
+                await self._emit_event("THINKING", {"prompt": f"Executing unfulfilled task: {last_unfulfilled_goal}"})
+                return await self._handle_multi_step_task(last_unfulfilled_goal)
+
+        # Contextual media follow-up: e.g. user provides a song/artist name like "Vishal" after media context
+        words = user_clean.split()
+        if 1 <= len(words) <= 5 and not any(w in p_lower for w in ("hello", "hi", "hey", "thanks", "thank you", "bye", "good", "yes", "no", "ok", "stop", "cancel")):
+            recent_texts = [m.get("content", "").lower() for m in self.conversation_history[-4:]]
+            has_media_context = any(
+                any(k in t for k in ("play", "music", "song", "youtube", "spotify", "video", "track"))
+                for t in recent_texts
+            )
+            if has_media_context:
+                followup_goal = f"Play {user_clean} on YouTube"
+                await self._emit_event("THINKING", {"prompt": f"Executing media follow-up: {followup_goal}"})
+                return await self._handle_multi_step_task(followup_goal)
 
         # 1. Intent Classification
         intent = IntentClassifier.classify(user_clean)

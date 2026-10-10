@@ -64,6 +64,7 @@ class MockProvider(LLMProvider):
             actual_goal = goal.split("User Goal:")[1].split("\n")[0].strip()
         g_lower = actual_goal.lower()
         words = re.findall(r'\b[a-zA-Z0-9_-]+\b', g_lower)
+        first_word = words[0] if words else ""
 
         # 0. Voice / Video Calls (e.g. "call Krishna", "call Krishna using WhatsApp")
         if any(w in ("call", "facetime", "ring") for w in words) and not any(w in ("meeting", "schedule") for w in words):
@@ -154,16 +155,34 @@ class MockProvider(LLMProvider):
                 task_object=task_obj
             )
 
-        # 0.2. Explicit Playback Command: ONLY when user explicitly asks to "play" or "listen to"
-        # Never trigger playback if user simply asks to "open youtube" or "open safari"
-        is_play_request = any(w in ("play", "listen") for w in words)
-        if is_play_request and any(w in g_lower for w in ("song", "music", "track", "video", "playlist", "youtube", "spotify")):
+        # 0.2. Explicit Playback Command: ONLY when user explicitly asks to "play", "listen to", "stream", or "put on"
+        is_play_request = (
+            first_word in ("play", "listen", "stream")
+            or "play " in g_lower
+            or "listen to " in g_lower
+            or "stream " in g_lower
+            or (any(w in ("play", "listen") for w in words) and not g_lower.startswith("open "))
+            or (g_lower.startswith("open ") and any(w in g_lower for w in (" and play ", " and listen ")))
+        )
+        if is_play_request:
             browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            service = "spotify" if "spotify" in g_lower else "youtube"
+
             # Extract user's exact query
-            query = "music"
-            m = re.search(r'(?:play|listen to)\s+([^,\.\n]+?)(?:\s+on\s+youtube|\s+in\s+spotify|\s+site|\s*$)', g_lower)
-            if m:
-                query = m.group(1).replace("youtube", "").replace("spotify", "").strip() or "music"
+            m = re.search(r'(?:play|listen to|stream|put on)\s+(.+)', g_lower)
+            raw = m.group(1).strip() if m else "music"
+            # Strip trailing service/browser clauses (e.g. "on youtube", "in youtube", "on safari")
+            raw = re.sub(r'\s+(?:on|in|from|via)\s+(?:youtube|spotify|safari|chrome|browser|web)$', '', raw).strip()
+            # If generic filler words, default to "music"
+            if raw in ("a music", "music", "a song", "songs", "song", "something", "any song", "anything", ""):
+                query = "music"
+            else:
+                # Strip leading articles like "a " or "the "
+                if raw.startswith("a "):
+                    raw = raw[2:].strip()
+                elif raw.startswith("the "):
+                    raw = raw[4:].strip()
+                query = raw or "music"
 
             task_obj = TaskObject(
                 intent="play_music",
@@ -181,7 +200,7 @@ class MockProvider(LLMProvider):
                     title=f"Search YouTube and play '{query}' in {browser}",
                     tool_name="app_control",
                     action="play_media",
-                    parameters={"query": query, "browser": browser, "service": "youtube"},
+                    parameters={"query": query, "browser": browser, "service": service},
                     expected_outcome=f"Playing '{query}' on YouTube in {browser}",
                     risk_level=1
                 )

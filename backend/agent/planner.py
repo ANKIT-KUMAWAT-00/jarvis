@@ -55,6 +55,13 @@ class IntentClassifier:
         if any(w in p_lower for w in ("create", "build", "run", "fix", "test", "inspect", "compile", "install", "refactor", "commit", "delete", "write", "list files", "show files", "execute")):
             return "ENGINEERING_ACTION"
 
+        # Media playback & streaming commands (play, song, music, video, youtube, spotify)
+        if any(w in p_lower for w in ("play ", "play a ", "listen to ", "stream ", "watch ")) or (
+            any(w in p_lower for w in ("song", "music", "track", "video", "youtube", "spotify"))
+            and any(w in p_lower for w in ("play", "listen", "start", "put on", "stream", "watch"))
+        ):
+            return "ACTIONABLE_COMMAND"
+
         # Retry / Continuation / Confirmation triggers
         retry_phrases = (
             "just go for it", "go for it", "just do it", "do it",
@@ -67,7 +74,12 @@ class IntentClassifier:
 
         # Imperative action verbs starting sentence
         first_word = p_lower.split()[0] if p_lower.split() else ""
-        if first_word in ("open", "launch", "start", "close", "quit", "set", "send", "fix", "schedule", "create", "make", "show", "list", "run", "call", "facetime", "ring"):
+        if first_word in (
+            "open", "launch", "start", "close", "quit", "set", "send", "fix",
+            "schedule", "create", "make", "show", "list", "run", "call",
+            "facetime", "ring", "play", "listen", "watch", "stream", "search",
+            "google", "find", "install", "download", "pause", "resume"
+        ):
             return "ACTIONABLE_COMMAND"
 
         return "GENERAL_CONVERSATION"

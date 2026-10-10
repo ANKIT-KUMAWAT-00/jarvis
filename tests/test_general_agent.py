@@ -237,3 +237,51 @@ async def test_app_store_approval_with_go_for_it(agent):
     res2 = await agent.run("just go for it")
     assert res2["state"] == "WAITING_FOR_INSTALLATION"
     assert "opened the Mac App Store page" in res2["response"]
+
+
+@pytest.mark.asyncio
+async def test_play_music_in_youtube_execution(agent):
+    """'Play a music in YouTube' must execute play_media with query 'music'."""
+    res = await agent.run("Play a music in YouTube")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "play_media"
+    assert step["parameters"]["query"].lower() == "music"
+
+
+@pytest.mark.asyncio
+async def test_play_artist_or_song_directly(agent):
+    """'play Vishal' must execute play_media with query 'vishal'."""
+    res = await agent.run("play Vishal")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["action"] == "play_media"
+    assert step["parameters"]["query"].lower() == "vishal"
+
+
+@pytest.mark.asyncio
+async def test_unfulfilled_task_re_execution_on_criticism(agent):
+    """When user says 'Bro you haven't done any task', re-execute the preceding command."""
+    await agent.run("Play a music in YouTube")
+    res = await agent.run("Bro you haven't done any task")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    assert agent.recent_task_records[-1]["goal"] == "Play a music in YouTube"
+
+
+@pytest.mark.asyncio
+async def test_media_followup_artist_name(agent):
+    """When user types artist name 'Vishal' after media context, execute play_media for 'Vishal'."""
+    await agent.run("Play a music in YouTube")
+    res = await agent.run("Vishal")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    assert last_task["goal"] == "Play Vishal on YouTube"
+    assert last_task["steps"][0]["parameters"]["query"].lower() == "vishal"
+
