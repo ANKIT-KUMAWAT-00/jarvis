@@ -261,19 +261,6 @@ class JarvisAgent:
                 await self._emit_event("THINKING", {"prompt": f"Executing unfulfilled task: {last_unfulfilled_goal}"})
                 return await self._handle_multi_step_task(last_unfulfilled_goal)
 
-        # Contextual media follow-up: e.g. user provides a song/artist name like "Vishal" after media context
-        words = user_clean.split()
-        if 1 <= len(words) <= 5 and not any(w in p_lower for w in ("hello", "hi", "hey", "thanks", "thank you", "bye", "good", "yes", "no", "ok", "stop", "cancel")):
-            recent_texts = [m.get("content", "").lower() for m in self.conversation_history[-4:]]
-            has_media_context = any(
-                any(k in t for k in ("play", "music", "song", "youtube", "spotify", "video", "track"))
-                for t in recent_texts
-            )
-            if has_media_context:
-                followup_goal = f"Play {user_clean} on YouTube"
-                await self._emit_event("THINKING", {"prompt": f"Executing media follow-up: {followup_goal}"})
-                return await self._handle_multi_step_task(followup_goal)
-
         # 1. Intent Classification
         intent = IntentClassifier.classify(user_clean)
 
@@ -289,7 +276,26 @@ class JarvisAgent:
         if intent in ("ENGINEERING_ACTION", "PROJECT_SWITCH", "ACTIONABLE_COMMAND") or confirmation_token_id is not None:
             return await self._handle_multi_step_task(user_clean, confirmation_token_id)
 
-        # 5. Default General Conversation with Epistemic Context
+        # 5. Contextual media follow-up for standalone artist/song queries (e.g. user commands "Vishal" or "Adele")
+        words = user_clean.split()
+        command_disqualifiers = (
+            "open", "launch", "close", "quit", "start", "stop", "search", "find",
+            "show", "list", "run", "call", "send", "fix", "create", "go", "navigate",
+            "install", "download", "safari", "chrome", "browser", "telegram", "whatsapp",
+            "hello", "hi", "hey", "thanks", "thank you", "bye", "good", "yes", "no", "ok"
+        )
+        if 1 <= len(words) <= 3 and not any(w in p_lower for w in command_disqualifiers):
+            recent_texts = [m.get("content", "").lower() for m in self.conversation_history[-4:]]
+            has_media_context = any(
+                any(k in t for k in ("play", "music", "song", "youtube", "spotify", "video", "track"))
+                for t in recent_texts
+            )
+            if has_media_context:
+                followup_goal = f"Play {user_clean} on YouTube"
+                await self._emit_event("THINKING", {"prompt": f"Executing media follow-up: {followup_goal}"})
+                return await self._handle_multi_step_task(followup_goal)
+
+        # 6. Default General Conversation with Epistemic Context
         return await self._handle_conversation(user_clean)
 
     async def _handle_remember(self, text: str) -> Dict[str, Any]:

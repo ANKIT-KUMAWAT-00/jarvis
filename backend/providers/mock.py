@@ -252,6 +252,114 @@ class MockProvider(LLMProvider):
                 task_object=task_obj
             )
 
+        # 0.35. General Web Search (e.g. "search telegram in safari", "search for X on google", "in safari search telegram")
+        is_search_intent = (first_word in ("search", "google") or "search " in g_lower or "google " in g_lower) and not ("youtube" in g_lower and any(w in words for w in ("search", "find", "look")))
+        if is_search_intent and not is_play_request:
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            matches = re.findall(r'search\s+(?:for\s+)?([a-zA-Z0-9_\s]+?)(?:\s+(?:in|on)\s+(?:safari|chrome|google|browser|the web|web)|\s*$)', g_lower)
+            query = "web"
+            if matches:
+                candidates = [m.strip() for m in matches if m.strip() and m.strip() not in ("safari", "chrome", "google", "browser")]
+                query = candidates[-1] if candidates else matches[0].strip()
+            query = re.sub(r'\s+(?:in|on)\s+(?:safari|chrome|google|browser)$', '', query).strip()
+            if not query or query in ("safari", "chrome", "browser"):
+                query = "web"
+
+            import urllib.parse
+            url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+            task_obj = TaskObject(
+                intent="web_search",
+                target=query,
+                actions=[
+                    TaskAction(type="open_service", target="Google"),
+                    TaskAction(type="search", query=query, parameters={"url": url, "browser": browser})
+                ],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Search Google for '{query}' in {browser}",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": url, "browser": browser},
+                    expected_outcome=f"Google search results for '{query}' loaded in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="browser_url",
+                requires_tools=True,
+                summary=f"Searching Google for '{query}' in {browser}.",
+                steps=steps,
+                verification_criteria=f"Google search for '{query}' opened in {browser}.",
+                task_object=task_obj
+            )
+
+        # 0.36. Open Website / Web Service in Specific Browser (e.g. "open telegram in safari", "open whatsapp in chrome")
+        m_in_browser = re.search(r'(?:open|launch|go to)\s+(.+?)\s+(?:in|on)\s+(safari|chrome|google chrome|browser)', g_lower)
+        if m_in_browser and not is_play_request:
+            raw_target = m_in_browser.group(1).strip()
+            req_browser = m_in_browser.group(2).strip()
+            browser = "Google Chrome" if "chrome" in req_browser else "Safari"
+            clean_target = re.sub(r'^(?:the|web)\s+', '', raw_target).strip()
+
+            KNOWN_WEB_SERVICES = {
+                "telegram": "https://web.telegram.org",
+                "whatsapp": "https://web.whatsapp.com",
+                "youtube": "https://www.youtube.com",
+                "google": "https://www.google.com",
+                "github": "https://github.com",
+                "twitter": "https://x.com",
+                "x": "https://x.com",
+                "reddit": "https://www.reddit.com",
+                "chatgpt": "https://chatgpt.com",
+                "gmail": "https://mail.google.com",
+                "netflix": "https://www.netflix.com",
+                "instagram": "https://www.instagram.com",
+                "linkedin": "https://www.linkedin.com",
+                "facebook": "https://www.facebook.com",
+                "discord": "https://discord.com/app",
+                "amazon": "https://www.amazon.com",
+                "wikipedia": "https://www.wikipedia.org"
+            }
+
+            import urllib.parse
+            if clean_target in KNOWN_WEB_SERVICES:
+                url = KNOWN_WEB_SERVICES[clean_target]
+            elif any(clean_target.endswith(tld) for tld in (".com", ".org", ".io", ".net", ".edu", ".gov", ".co")):
+                url = clean_target if clean_target.startswith("http") else f"https://{clean_target}"
+            else:
+                url = f"https://www.google.com/search?q={urllib.parse.quote(clean_target)}"
+
+            task_obj = TaskObject(
+                intent="browser_url",
+                target=clean_target,
+                actions=[TaskAction(type="open_url", target=url, parameters={"url": url, "browser": browser})],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open {clean_target.capitalize()} ({url}) in {browser}",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": url, "browser": browser},
+                    expected_outcome=f"Opened {url} in {browser}",
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="browser_url",
+                requires_tools=True,
+                summary=f"Opening {clean_target.capitalize()} in {browser}.",
+                steps=steps,
+                verification_criteria=f"Opened {clean_target.capitalize()} in {browser}.",
+                task_object=task_obj
+            )
+
         # 0.4. Open Website / YouTube / URL without extra actions (e.g. "open youtube", "open safari", "open google")
         if "youtube" in g_lower and not is_play_request:
             browser = "Google Chrome" if "chrome" in g_lower else "Safari"

@@ -331,6 +331,8 @@ class GeminiProvider(LLMProvider):
                 "   - 'Open YouTube': ONLY open the YouTube homepage (url: 'https://www.youtube.com') via 'app_control.open_url'. Never search or play music.\n"
                 "   - 'Open YouTube and search for X': Open YouTube search results via 'app_control.open_url' (url: 'https://www.youtube.com/results?search_query=X').\n"
                 "   - 'Open YouTube and play X' or 'Play X': Search and play X via 'app_control.play_media' (query: 'X').\n"
+                "   - 'Open X in Safari/Chrome': Open web service/site X in browser via 'app_control.open_url' (e.g. Telegram -> 'https://web.telegram.org', WhatsApp -> 'https://web.whatsapp.com', or direct URL).\n"
+                "   - 'Search X in Safari/Chrome' or 'Search X on Google/Web': Search Google for query X via 'app_control.open_url' (url: 'https://www.google.com/search?q=X', browser: 'Safari' or 'Google Chrome').\n"
                 "3. APPLICATION DISCOVERY & SYSTEM SETTINGS:\n"
                 "   - Launch apps: use 'app_control' with action 'open_app' (params: app_name).\n"
                 "   - Mac App Store: use 'app_control' with action 'open_app_store' (params: app_name).\n"

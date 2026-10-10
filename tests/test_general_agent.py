@@ -285,3 +285,45 @@ async def test_media_followup_artist_name(agent):
     assert last_task["goal"] == "Play Vishal on YouTube"
     assert last_task["steps"][0]["parameters"]["query"].lower() == "vishal"
 
+
+@pytest.mark.asyncio
+async def test_open_telegram_in_safari(agent):
+    """'Jarvis open telegram in Safari' must open web.telegram.org in Safari, never YouTube."""
+    res = await agent.run("Jarvis open telegram in Safari")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "open_url"
+    assert "web.telegram.org" in step["parameters"]["url"]
+    assert step["parameters"]["browser"] == "Safari"
+
+
+@pytest.mark.asyncio
+async def test_search_telegram_in_safari(agent):
+    """'search telegram in safari' must search Google for telegram in Safari."""
+    res = await agent.run("search telegram in safari")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "open_url"
+    assert "google.com/search" in step["parameters"]["url"]
+    assert "telegram" in step["parameters"]["url"]
+    assert step["parameters"]["browser"] == "Safari"
+
+
+@pytest.mark.asyncio
+async def test_no_media_hijack_after_music(agent):
+    """After playing music, 'Open telegram in Safari' must open Telegram, not play on YouTube."""
+    await agent.run("Play a music in YouTube")
+    res = await agent.run("Open telegram in Safari")
+    assert res["state"] == "COMPLETED"
+    last_task = agent.recent_task_records[-1]
+    assert last_task["steps"][0]["action"] == "open_url"
+    assert "telegram" in last_task["steps"][0]["parameters"]["url"]
+    assert "youtube" not in last_task["steps"][0]["parameters"]["url"]
+
+

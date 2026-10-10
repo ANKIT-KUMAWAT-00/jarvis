@@ -15,6 +15,12 @@ class IntentClassifier:
     def classify(prompt: str) -> str:
         p_lower = prompt.lower().strip()
 
+        # Strip wake words
+        for prefix in ("jarvis ", "jarvis, ", "hey jarvis ", "hey jarvis, ", "ok jarvis ", "ok jarvis, "):
+            if p_lower.startswith(prefix):
+                p_lower = p_lower[len(prefix):].strip()
+                break
+
         # Remember / Memory command
         if p_lower.startswith(("remember that", "remember:", "remember ", "note down", "keep in mind")):
             return "REMEMBER_FACT"
@@ -33,6 +39,10 @@ class IntentClassifier:
 
         # Schedule / Reminder
         if p_lower.startswith(("remind me ", "set a reminder", "schedule task")):
+            return "ACTIONABLE_COMMAND"
+
+        # Browser & Web search commands (e.g. "search telegram in safari", "open telegram in safari")
+        if any(w in p_lower for w in ("search ", "search for ", "google ", "look up ", "in safari", "in chrome", "in browser", "on safari", "on chrome")):
             return "ACTIONABLE_COMMAND"
 
         # Apps & System control (open, launch, start, close, quit)
