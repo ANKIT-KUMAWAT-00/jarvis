@@ -327,3 +327,76 @@ async def test_no_media_hijack_after_music(agent):
     assert "youtube" not in last_task["steps"][0]["parameters"]["url"]
 
 
+@pytest.mark.asyncio
+async def test_whatsapp_archived_chats_navigation(agent):
+    """'in my whatsapp go to archived chats' must navigate to archived chats via interact_web."""
+    res = await agent.run("in my whatsapp go to archived chats")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    assert "cannot directly navigate" not in res["response"].lower()
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "interact_web"
+    assert step["parameters"]["service"] == "whatsapp"
+    assert step["parameters"]["target"] == "archived"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_unread_chats_filter(agent):
+    """'in whatsapp show unread chats' must filter unread chats via interact_web."""
+    res = await agent.run("in whatsapp show unread chats")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "interact_web"
+    assert step["parameters"]["service"] == "whatsapp"
+    assert step["parameters"]["target"] == "unread"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_search_chat(agent):
+    """'search for Rohit in whatsapp' must search WhatsApp via interact_web."""
+    res = await agent.run("search for Rohit in whatsapp")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "interact_web"
+    assert step["parameters"]["service"] == "whatsapp"
+    assert step["parameters"]["target"] == "search"
+    assert "rohit" in step["parameters"]["query"].lower()
+
+
+@pytest.mark.asyncio
+async def test_browser_click_element(agent):
+    """'click settings in safari' must click settings via interact_web."""
+    res = await agent.run("click settings in safari")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "interact_web"
+    assert step["parameters"]["action_type"] == "click"
+    assert step["parameters"]["target"] == "settings"
+
+
+@pytest.mark.asyncio
+async def test_browser_type_text(agent):
+    """'type hello into search in safari' must type hello via interact_web."""
+    res = await agent.run("type hello into search in safari")
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+    last_task = agent.recent_task_records[-1]
+    step = last_task["steps"][0]
+    assert step["tool_name"] == "app_control"
+    assert step["action"] == "interact_web"
+    assert step["parameters"]["action_type"] == "type"
+    assert step["parameters"]["text"] == "hello"
+
+
+

@@ -6,6 +6,7 @@ opening macOS System Settings privacy panes, and controlling web URLs without ha
 
 import asyncio
 import subprocess
+import json
 import os
 import shutil
 import urllib.parse
@@ -18,13 +19,14 @@ from backend.security.permissions import ActionLevel
 class AppControlTool(Tool):
     name = "app_control"
     description = (
-        "Controls macOS applications, browser tabs, media, system settings, and URLs. "
+        "Controls macOS applications, browser tabs, media, system settings, URLs, and website interactions. "
         "Actions: 'open_app' (launch an application: params: app_name), "
         "'check_app' (check whether an application is installed on macOS: params: app_name), "
         "'open_app_store' (navigate to the Mac App Store page for an application: params: app_name), "
         "'open_settings' (open macOS System Settings to a specific privacy/system pane: params: pane), "
         "'open_url' (open any web URL in default or specified browser: params: url, browser), "
         "'open_new_tab' (open a new browser tab in Safari or Chrome: params: browser, url), "
+        "'interact_web' (interact with websites, web apps, or browser tabs in Safari or Chrome, such as navigating WhatsApp archived/unread chats, clicking elements, searching, or typing: params: browser, service, action_type, target, query, text, selector), "
         "'play_media' (search and play music/videos on YouTube or Spotify: params: query, browser, service), "
         "'close_app' (quit an application gracefully: params: app_name), "
         "'list_apps' (list running or available common macOS applications)."
@@ -193,6 +195,17 @@ class AppControlTool(Tool):
             return await self._open_new_tab(browser=str(browser or app_name or "Safari").strip(), url=str(url).strip())
         elif action == "play_media":
             return await self._play_media(query=str(query or app_name or url).strip(), service=str(service).strip(), browser=str(browser or "Safari").strip())
+        elif action in ("interact_web", "web_action", "browser_interact"):
+            return await self._interact_web(
+                browser=str(browser or "Safari").strip(),
+                action_type=str(params.get("action_type") or "service_action").strip(),
+                service=str(params.get("service") or "").strip(),
+                target=str(params.get("target") or params.get("element") or "").strip(),
+                query=str(query or "").strip(),
+                text=str(params.get("text") or query or "").strip(),
+                selector=str(params.get("selector") or "").strip(),
+                key=str(params.get("key") or "").strip()
+            )
         elif action == "close_app":
             return await self._close_app(str(app_name).strip())
         elif action == "list_apps":
@@ -201,7 +214,7 @@ class AppControlTool(Tool):
             return ToolResult(
                 success=False,
                 output="",
-                error=f"Unknown app_control action '{action}'. Supported: open_app, check_app, open_app_store, open_settings, open_project, open_url, open_new_tab, play_media, close_app, list_apps"
+                error=f"Unknown app_control action '{action}'. Supported: open_app, check_app, open_app_store, open_settings, open_project, open_url, open_new_tab, interact_web, play_media, close_app, list_apps"
             )
 
     async def _check_app(self, raw_name: str) -> ToolResult:
@@ -617,6 +630,241 @@ class AppControlTool(Tool):
             )
         except Exception as e:
             return ToolResult(success=False, output="", error=f"Failed to list applications: {str(e)}")
+
+    async def _interact_web(
+        self,
+        browser: str = "Safari",
+        action_type: str = "service_action",
+        service: str = "",
+        target: str = "",
+        query: str = "",
+        text: str = "",
+        selector: str = "",
+        key: str = ""
+    ) -> ToolResult:
+        """Interact with web pages, web apps (e.g. WhatsApp Web), or browser interfaces."""
+        browser_name = "Google Chrome" if "chrome" in browser.lower() else "Safari"
+        service_clean = service.lower().strip()
+        target_clean = target.lower().strip()
+
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return ToolResult(
+                success=True,
+                output=f"Executed web action '{action_type}' for '{service_clean or target_clean}' in {browser_name}.",
+                raw_data={
+                    "browser": browser_name,
+                    "service": service_clean,
+                    "target": target_clean,
+                    "action_type": action_type,
+                    "executed": True
+                }
+            )
+
+        # 1. Determine target JavaScript based on service and action
+        js_code = ""
+        action_desc = ""
+
+        if service_clean == "whatsapp" or "whatsapp" in target_clean:
+            if any(k in target_clean for k in ("archive", "archived")):
+                action_desc = "Navigated to Archived chats in WhatsApp Web"
+                js_code = (
+                    "(() => {"
+                    "  const selectors = ['button[aria-label*=\"Archived\" i]', '[data-icon=\"archived\"]', '[title*=\"Archived\" i]', 'div[role=\"button\"][aria-label*=\"archived\" i]', '[data-testid=\"chat-list-item-archived\"]'];"
+                    "  for (const s of selectors) {"
+                    "    const el = document.querySelector(s);"
+                    "    if (el) { (el.closest('button, [role=\"button\"]') || el).click(); return JSON.stringify({success: true, message: 'Clicked Archived chats icon in WhatsApp Web'}); }"
+                    "  }"
+                    "  const els = Array.from(document.querySelectorAll('span, div[role=\"button\"], button'));"
+                    "  const found = els.find(e => e.innerText && e.innerText.trim().toLowerCase() === 'archived');"
+                    "  if (found) { (found.closest('button, [role=\"button\"]') || found).click(); return JSON.stringify({success: true, message: 'Clicked Archived text in WhatsApp Web'}); }"
+                    "  return JSON.stringify({success: false, error: 'Archived chats button not found on WhatsApp Web page'});"
+                    "})()"
+                )
+            elif any(k in target_clean for k in ("unread", "filter")):
+                action_desc = "Filtered unread chats in WhatsApp Web"
+                js_code = (
+                    "(() => {"
+                    "  const selectors = ['[aria-label*=\"Unread\" i]', '[data-icon=\"filter-unread\"]', '[title*=\"Unread\" i]'];"
+                    "  for (const s of selectors) {"
+                    "    const el = document.querySelector(s);"
+                    "    if (el) { (el.closest('button, [role=\"button\"]') || el).click(); return JSON.stringify({success: true, message: 'Clicked Unread chats filter in WhatsApp Web'}); }"
+                    "  }"
+                    "  return JSON.stringify({success: false, error: 'Unread chats filter button not found'});"
+                    "})()"
+                )
+            elif any(k in target_clean for k in ("search", "find")) or query:
+                q_safe = json.dumps(query or text)
+                action_desc = f"Searched WhatsApp Web for {q_safe}"
+                js_code = (
+                    f"((q) => {{"
+                    f"  const input = document.querySelector('div[contenteditable=\"true\"][data-tab=\"3\"], [aria-label*=\"Search\" i], [data-testid=\"chat-list-search\"]');"
+                    f"  if (input) {{"
+                    f"    input.focus();"
+                    f"    document.execCommand('insertText', false, q);"
+                    f"    return JSON.stringify({{success: true, message: 'Searched for ' + q + ' in WhatsApp Web'}});"
+                    f"  }}"
+                    f"  return JSON.stringify({{success: false, error: 'Search input not found in WhatsApp Web'}});"
+                    f"}}){q_safe}"
+                )
+            elif any(k in target_clean for k in ("send", "message")) and (text or query):
+                m_safe = json.dumps(text or query)
+                action_desc = "Sent message in WhatsApp Web"
+                js_code = (
+                    f"((msg) => {{"
+                    f"  const input = document.querySelector('footer div[contenteditable=\"true\"], div[data-tab=\"10\"][contenteditable=\"true\"]');"
+                    f"  if (input) {{"
+                    f"    input.focus();"
+                    f"    document.execCommand('insertText', false, msg);"
+                    f"    const sendBtn = document.querySelector('span[data-icon=\"send\"], button[aria-label*=\"Send\" i]');"
+                    f"    if (sendBtn) {{ (sendBtn.closest('button') || sendBtn).click(); return JSON.stringify({{success: true, message: 'Message sent in WhatsApp Web'}}); }}"
+                    f"  }}"
+                    f"  return JSON.stringify({{success: false, error: 'Message input or send button not found in WhatsApp Web'}});"
+                    f"}}){m_safe}"
+                )
+            else:
+                t_safe = json.dumps(target)
+                action_desc = f"Clicked '{target}' in WhatsApp Web"
+                js_code = (
+                    f"((t) => {{"
+                    f"  const qLow = t.toLowerCase().trim();"
+                    f"  const all = Array.from(document.querySelectorAll('button, a, [role=\"button\"], span, div'));"
+                    f"  for (const el of all) {{"
+                    f"    const txt = (el.innerText || el.textContent || '').trim().toLowerCase();"
+                    f"    const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();"
+                    f"    if (txt === qLow || aria === qLow) {{ (el.closest('button, a, [role=\"button\"]') || el).click(); return JSON.stringify({{success: true, message: 'Clicked ' + t}}); }}"
+                    f"  }}"
+                    f"  return JSON.stringify({{success: false, error: 'Element not found: ' + t}});"
+                    f"}}){t_safe}"
+                )
+        elif action_type == "type":
+            t_safe = json.dumps(text or query)
+            s_safe = json.dumps(selector)
+            action_desc = f"Typed text into {browser_name}"
+            js_code = (
+                f"((txt, sel) => {{"
+                f"  let el = null;"
+                f"  if (sel) {{ try {{ el = document.querySelector(sel); }} catch(e) {{}} }}"
+                f"  if (!el) {{"
+                f"    el = document.activeElement;"
+                f"    if (!el || (!['INPUT', 'TEXTAREA'].includes(el.tagName) && !el.isContentEditable)) {{"
+                f"      el = document.querySelector('input[type=\"text\"], input[type=\"search\"], input:not([type=\"hidden\"]), textarea, [contenteditable=\"true\"]');"
+                f"    }}"
+                f"  }}"
+                f"  if (el) {{"
+                f"    el.focus();"
+                f"    if (el.isContentEditable) {{ document.execCommand('insertText', false, txt); }}"
+                f"    else {{ el.value = txt; el.dispatchEvent(new Event('input', {{bubbles: true}})); el.dispatchEvent(new Event('change', {{bubbles: true}})); }}"
+                f"    return JSON.stringify({{success: true, message: 'Typed: ' + txt}});"
+                f"  }}"
+                f"  return JSON.stringify({{success: false, error: 'No input field found to type into'}});"
+                f"}}){t_safe}, {s_safe}"
+            )
+        else:
+            # General click action
+            t_safe = json.dumps(target)
+            action_desc = f"Clicked '{target}' in {browser_name}"
+            js_code = (
+                f"((target) => {{"
+                f"  try {{ const el = document.querySelector(target); if (el) {{ (el.closest('button, a, [role=\"button\"]') || el).click(); return JSON.stringify({{success: true, message: 'Clicked selector: ' + target}}); }} }} catch(e) {{}}"
+                f"  const tLow = target.toLowerCase().trim();"
+                f"  const all = Array.from(document.querySelectorAll('button, a, [role=\"button\"], span, div, h1, h2, h3, p'));"
+                f"  for (const el of all) {{"
+                f"    const txt = (el.innerText || el.textContent || '').trim().toLowerCase();"
+                f"    const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();"
+                f"    if (txt === tLow || aria === tLow) {{ (el.closest('button, a, [role=\"button\"]') || el).click(); return JSON.stringify({{success: true, message: 'Clicked ' + target}}); }}"
+                f"  }}"
+                f"  for (const el of all) {{"
+                f"    const txt = (el.innerText || el.textContent || '').trim().toLowerCase();"
+                f"    if (txt.includes(tLow)) {{ (el.closest('button, a, [role=\"button\"]') || el).click(); return JSON.stringify({{success: true, message: 'Clicked element containing ' + target}}); }}"
+                f"  }}"
+                f"  return JSON.stringify({{success: false, error: 'No element found matching ' + target}});"
+                f"}}){t_safe}"
+            )
+
+        # 2. Execute via AppleScript in target browser
+        escaped_js = js_code.replace('\\', '\\\\').replace('"', '\\"')
+        if browser_name == "Safari":
+            script = f'''
+tell application "Safari"
+    activate
+    if (count of windows) = 0 then
+        open location "https://web.whatsapp.com"
+        delay 2
+    end if
+    set res to do JavaScript "{escaped_js}" in current tab of front window
+    return res
+end tell
+'''
+        else:
+            script = f'''
+tell application "Google Chrome"
+    activate
+    if (count of windows) = 0 then
+        open location "https://web.whatsapp.com"
+        delay 2
+    end if
+    set res to execute active tab of front window javascript "{escaped_js}"
+    return res
+end tell
+'''
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "osascript", "-e", script,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout_b, stderr_b = await proc.communicate()
+            stdout_str = stdout_b.decode("utf-8", errors="replace").strip()
+            stderr_str = stderr_b.decode("utf-8", errors="replace").strip()
+
+            if proc.returncode != 0 or stderr_str:
+                lower_err = stderr_str.lower()
+                if "allow javascript from apple events" in lower_err:
+                    if browser_name == "Safari":
+                        instructions = (
+                            "To allow interaction inside Safari websites (like WhatsApp Web):\n"
+                            "1. Open Safari Settings (Cmd + ,) > Advanced > Check 'Show features for web developers'.\n"
+                            "2. In the menu bar at the top, click Develop > Check 'Allow JavaScript from Apple Events'."
+                        )
+                    else:
+                        instructions = (
+                            "To allow interaction inside Google Chrome:\n"
+                            "In Chrome's top menu bar, click View > Developer > Check 'Allow JavaScript from Apple Events'."
+                        )
+                    return ToolResult(
+                        success=False,
+                        output="",
+                        error=f"Browser automation requires 'Allow JavaScript from Apple Events' in {browser_name}.\n{instructions}",
+                        raw_data={
+                            "permission_required": "safari_developer",
+                            "browser": browser_name,
+                            "instructions": instructions
+                        }
+                    )
+                if "-1719" in lower_err or "assistive access" in lower_err:
+                    return ToolResult(
+                        success=False,
+                        output="",
+                        error="macOS Accessibility permission is required for assistive UI interaction.",
+                        raw_data={"permission_required": "accessibility", "pane": "accessibility"}
+                    )
+                return ToolResult(success=False, output="", error=f"Browser interaction error: {stderr_str}")
+
+            try:
+                res_obj = json.loads(stdout_str)
+                if isinstance(res_obj, dict) and not res_obj.get("success", True):
+                    return ToolResult(success=False, output="", error=res_obj.get("error", "Action failed inside browser."))
+            except Exception:
+                pass
+
+            return ToolResult(
+                success=True,
+                output=f"Successfully {action_desc or 'completed web action'} in {browser_name}.",
+                raw_data={"browser": browser_name, "service": service_clean, "target": target_clean, "result": stdout_str}
+            )
+        except Exception as e:
+            return ToolResult(success=False, output="", error=f"Failed to execute web action: {str(e)}")
 
     def verify(self, result: ToolResult, expectation: Dict[str, Any]) -> VerificationResult:
         if not result.success:

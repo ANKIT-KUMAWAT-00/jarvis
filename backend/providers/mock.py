@@ -120,8 +120,122 @@ class MockProvider(LLMProvider):
                 task_object=task_obj
             )
 
+        # 0.05. Web Application & In-Browser GUI Interaction (e.g. WhatsApp Web, clicking, typing in browser)
+        is_whatsapp_action = "whatsapp" in g_lower
+        is_archived_action = any(k in g_lower for k in ("archived", "archive"))
+        is_unread_action = any(k in g_lower for k in ("unread", "filter unread"))
+        is_click_action = "click" in g_lower
+        is_type_action = "type" in g_lower
+
+        if (is_whatsapp_action and (is_archived_action or is_unread_action or "search" in g_lower or "send" in g_lower or "chat" in g_lower)) or (is_archived_action and "chat" in g_lower):
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            if is_archived_action:
+                target = "archived"
+                summary = f"Navigating to Archived chats in WhatsApp Web ({browser})."
+                title = "Navigate to Archived chats in WhatsApp Web"
+                expected = "Navigated to Archived chats in WhatsApp Web"
+            elif is_unread_action:
+                target = "unread"
+                summary = f"Filtering unread chats in WhatsApp Web ({browser})."
+                title = "Filter unread chats in WhatsApp Web"
+                expected = "Filtered unread chats in WhatsApp Web"
+            elif "search" in g_lower:
+                m_q = re.search(r'(?:search|find)(?:\s+for)?\s+(.+?)(?:\s+in\s+whatsapp)?$', g_lower)
+                query = m_q.group(1).strip() if m_q else ""
+                target = "search"
+                summary = f"Searching WhatsApp Web for '{query}' ({browser})."
+                title = f"Search WhatsApp Web for '{query}'"
+                expected = f"Searched WhatsApp Web for '{query}'"
+            else:
+                target = "archived" if is_archived_action else "chat"
+                summary = f"Interacting with WhatsApp Web in {browser}."
+                title = f"Interact with WhatsApp Web in {browser}"
+                expected = "Completed action in WhatsApp Web"
+
+            task_obj = TaskObject(
+                intent="web_interaction",
+                target="WhatsApp",
+                actions=[TaskAction(type="interact_web", target=target, parameters={"service": "whatsapp", "target": target, "browser": browser})],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=title,
+                    tool_name="app_control",
+                    action="interact_web",
+                    parameters={
+                        "action": "interact_web",
+                        "service": "whatsapp",
+                        "target": target,
+                        "query": query if "search" in g_lower else "",
+                        "browser": browser
+                    },
+                    expected_outcome=expected,
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="web_interaction",
+                requires_tools=True,
+                summary=summary,
+                steps=steps,
+                verification_criteria=expected,
+                task_object=task_obj
+            )
+
+        # General Web Click / Type Interaction in browser or website
+        if is_click_action or is_type_action:
+            browser = "Google Chrome" if "chrome" in g_lower else "Safari"
+            if is_click_action:
+                m_clk = re.search(r'click\s+(?:on\s+|the\s+)?(.+?)(?:\s+(?:in|on)\s+(safari|chrome|browser|website))?$', g_lower)
+                target_elem = m_clk.group(1).strip() if m_clk else "element"
+                action_type = "click"
+                summary = f"Clicking '{target_elem}' in {browser}."
+                title = f"Click '{target_elem}' in {browser}"
+                expected = f"Clicked '{target_elem}' in {browser}"
+                params = {"action": "interact_web", "action_type": "click", "target": target_elem, "browser": browser}
+            else:
+                m_typ = re.search(r'type\s+(.+?)(?:\s+(?:in|into|on)\s+(.+))?$', g_lower)
+                text_to_type = m_typ.group(1).strip() if m_typ else ""
+                target_sel = m_typ.group(2).strip() if m_typ and m_typ.group(2) else ""
+                action_type = "type"
+                summary = f"Typing text into {browser}."
+                title = f"Type text into {browser}"
+                expected = f"Typed text into {browser}"
+                params = {"action": "interact_web", "action_type": "type", "text": text_to_type, "selector": target_sel, "browser": browser}
+
+            task_obj = TaskObject(
+                intent="web_interaction",
+                target=browser,
+                actions=[TaskAction(type="interact_web", target=action_type, parameters=params)],
+                status="pending"
+            )
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=title,
+                    tool_name="app_control",
+                    action="interact_web",
+                    parameters=params,
+                    expected_outcome=expected,
+                    risk_level=1
+                )
+            ]
+            return PlanResult(
+                goal=actual_goal,
+                intent="web_interaction",
+                requires_tools=True,
+                summary=summary,
+                steps=steps,
+                verification_criteria=expected,
+                task_object=task_obj
+            )
+
         # 0.1. macOS System Settings Panes (e.g. "open system settings", "open accessibility settings")
-        if "settings" in g_lower or "preferences" in g_lower:
+        is_sys_settings = ("system settings" in g_lower or "preferences" in g_lower or ("settings" in g_lower and not any(b in g_lower for b in ("safari", "chrome", "click", "browser", "whatsapp", "telegram", "in ", "on "))))
+        if is_sys_settings:
             pane = "general"
             for p_key in ("accessibility", "automation", "screen_recording", "microphone", "camera", "full_disk", "bluetooth"):
                 if p_key in g_lower:

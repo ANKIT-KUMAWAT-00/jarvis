@@ -15,11 +15,22 @@ class IntentClassifier:
     def classify(prompt: str) -> str:
         p_lower = prompt.lower().strip()
 
-        # Strip wake words
-        for prefix in ("jarvis ", "jarvis, ", "hey jarvis ", "hey jarvis, ", "ok jarvis ", "ok jarvis, "):
-            if p_lower.startswith(prefix):
-                p_lower = p_lower[len(prefix):].strip()
-                break
+        # Strip wake words and conversational preambles
+        preambles = (
+            "jarvis ", "jarvis, ", "hey jarvis ", "hey jarvis, ", "ok jarvis ", "ok jarvis, ",
+            "i want you to ", "i want that it must ", "i want that you ", "i want that ",
+            "i want to ", "i want it to ", "please ", "can you ", "could you ",
+            "i am saying to ", "i'm saying to ", "i am saying ", "i'm saying ",
+            "i need you to ", "i told you to "
+        )
+        changed = True
+        while changed:
+            changed = False
+            for pfx in preambles:
+                if p_lower.startswith(pfx):
+                    p_lower = p_lower[len(pfx):].strip()
+                    changed = True
+                    break
 
         # Remember / Memory command
         if p_lower.startswith(("remember that", "remember:", "remember ", "note down", "keep in mind")):
@@ -39,6 +50,23 @@ class IntentClassifier:
 
         # Schedule / Reminder
         if p_lower.startswith(("remind me ", "set a reminder", "schedule task")):
+            return "ACTIONABLE_COMMAND"
+
+        # Browser, Web Application & In-App navigation (e.g. "in my whatsapp go to archived chats", "in safari click login")
+        app_contexts = ("whatsapp", "telegram", "safari", "chrome", "browser", "website", "webpage", "web", "youtube", "google")
+        app_actions = (
+            "go to", "navigate to", "open", "click", "type", "search", "send", "show",
+            "archived", "unread", "chats", "chat", "select", "press", "scroll", "find"
+        )
+        if any(app in p_lower for app in app_contexts) and any(act in p_lower for act in app_actions):
+            return "ACTIONABLE_COMMAND"
+
+        if any(w in p_lower for w in (
+            "in whatsapp", "on whatsapp", "in my whatsapp", "on my whatsapp",
+            "in safari", "on safari", "in chrome", "on chrome", "in browser", "on browser",
+            "on website", "on webpage", "archived chats", "unread chats",
+            "click on", "click the", "type in", "type into"
+        )):
             return "ACTIONABLE_COMMAND"
 
         # Browser & Web search commands (e.g. "search telegram in safari", "open telegram in safari")
@@ -88,7 +116,8 @@ class IntentClassifier:
             "open", "launch", "start", "close", "quit", "set", "send", "fix",
             "schedule", "create", "make", "show", "list", "run", "call",
             "facetime", "ring", "play", "listen", "watch", "stream", "search",
-            "google", "find", "install", "download", "pause", "resume"
+            "google", "find", "install", "download", "pause", "resume",
+            "go", "click", "type", "press", "scroll", "navigate", "take", "check"
         ):
             return "ACTIONABLE_COMMAND"
 
@@ -113,7 +142,8 @@ class Planner:
             fast_plan = await local_mock.plan(goal, context=context, available_tools=available_tools)
             handled_intents = (
                 "media_playback", "browser_control", "browser_url",
-                "meeting_scheduling", "timer", "communication", "open_app_store"
+                "meeting_scheduling", "timer", "communication", "open_app_store",
+                "browser_interaction", "web_interaction"
             )
             # If fast plan explicitly recognized media playback, browser, app store, or communication, return it
             if fast_plan.intent in handled_intents and fast_plan.steps:

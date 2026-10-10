@@ -345,6 +345,12 @@ class GeminiProvider(LLMProvider):
                 "   - Send email: use 'communication' with action 'send_email' (params: to, subject, body).\n"
                 "5. STRUCTURED TASK OBJECT:\n"
                 "   Always populate the 'task_object' field with: intent, target, actions, dependencies, permissions, status='pending'.\n"
+                "6. BROWSER & WEB APPLICATION INTERACTION ('app_control.interact_web'):\n"
+                "   - When the user asks to navigate, click, search, send messages, or perform tasks inside WhatsApp, Telegram, or any website on Safari or Chrome:\n"
+                "     * Use 'app_control' with action 'interact_web'.\n"
+                "     * NEVER claim you cannot navigate within WhatsApp Web or interact with application interfaces. Use 'interact_web' to execute the action.\n"
+                "     * For WhatsApp Web: params: {service: 'whatsapp', target: 'archived' | 'unread' | 'search' | 'send_message', browser: 'Safari' | 'Google Chrome', query/text: '...'}\n"
+                "     * For websites on Safari/Chrome: params: {action_type: 'click' | 'type', target: '...', text: '...', browser: 'Safari' | 'Google Chrome'}\n"
                 "Never hallucinate tools that do not exist in Available Tools.\n"
                 "Respect action risks: file deletions and destructive commands require Level 3."
             )

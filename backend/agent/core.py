@@ -72,7 +72,7 @@ class JarvisAgent:
         t = text.lower()
         if any(p in t for p in ("not authorized to send apple events", "automation", "-1743", "erraeeventnotpermitted")):
             return "automation"
-        if any(p in t for p in ("accessibility", "assistive access", "access not allowed", "not allowed to send keystrokes", "axerror")):
+        if any(p in t for p in ("accessibility", "assistive access", "access not allowed", "not allowed to send keystrokes", "axerror", "-1719")):
             return "accessibility"
         if any(p in t for p in ("screen recording", "screencapture", "screen capture", "display capture")):
             return "screen_recording"
@@ -84,6 +84,8 @@ class JarvisAgent:
             return "full_disk"
         if "bluetooth" in t:
             return "bluetooth"
+        if "allow javascript from apple events" in t:
+            return "safari_developer"
         return None
 
     def _detect_user_correction(self, text: str) -> bool:
@@ -481,13 +483,23 @@ class JarvisAgent:
             if not tool_res.success:
                 perm_pane = self._detect_permission_requirement(f"{tool_res.error or ''} {step.title}")
                 if perm_pane:
-                    await self.tool_registry.execute_tool("app_control", {"action": "open_settings", "pane": perm_pane})
-                    friendly_pane = perm_pane.replace("_", " ").title()
-                    perm_prompt = (
-                        f"I need {friendly_pane} permission to complete this operation, Sir. "
-                        f"I have opened the {friendly_pane} Settings page for you. "
-                        f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
-                    )
+                    if perm_pane == "safari_developer":
+                        perm_prompt = (
+                            "Sir, interacting with buttons and interface elements inside Safari (like WhatsApp Web's Archived chats) "
+                            "requires enabling 'Allow JavaScript from Apple Events'.\n\n"
+                            "Quick 1-time setup:\n"
+                            "1. Open Safari Settings (Cmd + ,) > Advanced > Check 'Show features for web developers'.\n"
+                            "2. In the menu bar at the top, click Develop > Check 'Allow JavaScript from Apple Events'.\n\n"
+                            f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
+                        )
+                    else:
+                        await self.tool_registry.execute_tool("app_control", {"action": "open_settings", "pane": perm_pane})
+                        friendly_pane = perm_pane.replace("_", " ").title()
+                        perm_prompt = (
+                            f"I need {friendly_pane} permission to complete this operation, Sir. "
+                            f"I have opened the {friendly_pane} Settings page for you. "
+                            f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
+                        )
                     self.pending_task = {
                         "type": "MAC_PERMISSION",
                         "original_goal": goal,
@@ -547,13 +559,23 @@ class JarvisAgent:
                 # Check if failure was caused by macOS system permission
                 perm_pane = self._detect_permission_requirement(f"{v_res.actual or ''} {v_res.message or ''}")
                 if perm_pane:
-                    await self.tool_registry.execute_tool("app_control", {"action": "open_settings", "pane": perm_pane})
-                    friendly_pane = perm_pane.replace("_", " ").title()
-                    perm_prompt = (
-                        f"I need {friendly_pane} permission to complete this operation, Sir. "
-                        f"I have opened the {friendly_pane} Settings page for you. "
-                        f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
-                    )
+                    if perm_pane == "safari_developer":
+                        perm_prompt = (
+                            "Sir, interacting with buttons and interface elements inside Safari (like WhatsApp Web's Archived chats) "
+                            "requires enabling 'Allow JavaScript from Apple Events'.\n\n"
+                            "Quick 1-time setup:\n"
+                            "1. Open Safari Settings (Cmd + ,) > Advanced > Check 'Show features for web developers'.\n"
+                            "2. In the menu bar at the top, click Develop > Check 'Allow JavaScript from Apple Events'.\n\n"
+                            f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
+                        )
+                    else:
+                        await self.tool_registry.execute_tool("app_control", {"action": "open_settings", "pane": perm_pane})
+                        friendly_pane = perm_pane.replace("_", " ").title()
+                        perm_prompt = (
+                            f"I need {friendly_pane} permission to complete this operation, Sir. "
+                            f"I have opened the {friendly_pane} Settings page for you. "
+                            f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
+                        )
                     self.pending_task = {
                         "type": "MAC_PERMISSION",
                         "original_goal": goal,
