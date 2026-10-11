@@ -67,10 +67,18 @@ class JarvisAgent:
         self.pending_task: Optional[Dict[str, Any]] = None
 
     @staticmethod
-    def _detect_permission_requirement(text: str) -> Optional[str]:
-        """Detect macOS privacy/security permission requirement from error messages."""
+    def _detect_permission_requirement(text: str, raw_data: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """Detect macOS privacy/security permission requirement from error messages or raw payload."""
+        if raw_data:
+            if raw_data.get("permission_required"):
+                return raw_data.get("permission_required")
+            if raw_data.get("pane"):
+                return raw_data.get("pane")
+
         t = text.lower()
-        if any(p in t for p in ("not authorized to send apple events", "automation", "-1743", "erraeeventnotpermitted")):
+        if any(p in t for p in ("allow javascript from apple events", "executing javascript through applescript is turned off", "developer section", "view > developer", "safari_developer")):
+            return "safari_developer"
+        if any(p in t for p in ("not authorized to send apple events", "privacy_automation", "-1743", "erraeeventnotpermitted", "com.apple.preference.security?privacy_automation")):
             return "automation"
         if any(p in t for p in ("accessibility", "assistive access", "access not allowed", "not allowed to send keystrokes", "axerror", "-1719")):
             return "accessibility"
@@ -84,8 +92,6 @@ class JarvisAgent:
             return "full_disk"
         if "bluetooth" in t:
             return "bluetooth"
-        if "allow javascript from apple events" in t:
-            return "safari_developer"
         return None
 
     def _detect_user_correction(self, text: str) -> bool:
@@ -98,7 +104,8 @@ class JarvisAgent:
             "that is not what i asked", "not what i asked", "wrong output", "false", "incomplete",
             "you are not listening", "not doing the task", "acting like a chatbot", "forgetting", "forgot",
             "not working", "not wroking", "responded only", "only responded", "saying but not working",
-            "saying but it is not", "didn't play", "not playing", "didn't open", "haven't opened"
+            "saying but it is not", "didn't play", "not playing", "didn't open", "haven't opened",
+            "after confirmation", "opening the automation tool", "opening automation", "automation tool"
         )
         return any(ind in t_lower for ind in indicators)
 
@@ -226,7 +233,14 @@ class JarvisAgent:
 
             # 3. macOS Permission grant completion
             elif self.pending_task.get("type") == "MAC_PERMISSION":
-                if any(w in p_lower for w in ("done", "enabled", "granted", "i enabled it", "continue", "resume", "retry", "yes", "ok", "finished", "go for it", "just do it", "just go for it", "proceed")):
+                confirmation_keywords = (
+                    "done", "enabled", "granted", "i enabled it", "continue", "resume", "retry",
+                    "yes", "ok", "finished", "go for it", "just do it", "just go for it", "proceed",
+                    "confirm", "confirmed", "i confirmed", "after confirmation", "confirmation",
+                    "authorized", "allowed", "i allowed it", "allow", "i gave permission", "permission given",
+                    "already done", "it is done", "all set", "ready"
+                )
+                if any(w in p_lower for w in confirmation_keywords):
                     orig_goal = self.pending_task["original_goal"]
                     self.pending_task = None
                     return await self._handle_multi_step_task(orig_goal)
@@ -247,10 +261,13 @@ class JarvisAgent:
                 await self._emit_event("THINKING", {"prompt": f"Re-executing task: {last_goal}"})
                 return await self._handle_multi_step_task(last_goal)
 
-        # Unfulfilled task execution when user reports JARVIS didn't do the task
+        # Unfulfilled task execution when user reports JARVIS didn't do the task or reports failure after confirmation
         if self._detect_user_correction(user_clean):
             last_unfulfilled_goal = None
-            if self.recent_task_records:
+            if self.pending_task is not None:
+                last_unfulfilled_goal = self.pending_task.get("original_goal")
+                self.pending_task = None
+            if not last_unfulfilled_goal and self.recent_task_records:
                 last_unfulfilled_goal = self.recent_task_records[-1].get("goal")
             if not last_unfulfilled_goal and self.conversation_history:
                 for msg in reversed(self.conversation_history):
@@ -481,24 +498,35 @@ class JarvisAgent:
 
             # macOS Permission Escalation: Detect if action requires macOS settings authorization
             if not tool_res.success:
-                perm_pane = self._detect_permission_requirement(f"{tool_res.error or ''} {step.title}")
+                perm_pane = self._detect_permission_requirement(
+                    f"{tool_res.error or ''} {step.title}",
+                    raw_data=tool_res.raw_data
+                )
                 if perm_pane:
                     if perm_pane == "safari_developer":
-                        perm_prompt = (
-                            "Sir, interacting with buttons and interface elements inside Safari (like WhatsApp Web's Archived chats) "
-                            "requires enabling 'Allow JavaScript from Apple Events'.\n\n"
-                            "Quick 1-time setup:\n"
-                            "1. Open Safari Settings (Cmd + ,) > Advanced > Check 'Show features for web developers'.\n"
-                            "2. In the menu bar at the top, click Develop > Check 'Allow JavaScript from Apple Events'.\n\n"
-                            f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
-                        )
+                        browser_label = (tool_res.raw_data or {}).get("browser", "your browser")
+                        if "chrome" in browser_label.lower():
+                            perm_prompt = (
+                                "Sir, interacting with buttons inside Google Chrome requires enabling 'Allow JavaScript from Apple Events'.\n\n"
+                                "Quick 1-step setup:\n"
+                                "In Google Chrome's top menu bar, click View > Developer > Check 'Allow JavaScript from Apple Events'.\n\n"
+                                f"Once enabled, please say 'done', 'confirmed', or 'continue' so I can resume your task: '{goal}'."
+                            )
+                        else:
+                            perm_prompt = (
+                                "Sir, interacting with buttons inside Safari requires enabling 'Allow JavaScript from Apple Events'.\n\n"
+                                "Quick 1-time setup:\n"
+                                "1. Open Safari Settings (Cmd + ,) > Advanced > Check 'Show features for web developers'.\n"
+                                "2. In the menu bar at the top, click Develop > Check 'Allow JavaScript from Apple Events'.\n\n"
+                                f"Once enabled, please say 'done', 'confirmed', or 'continue' so I can resume your task: '{goal}'."
+                            )
                     else:
                         await self.tool_registry.execute_tool("app_control", {"action": "open_settings", "pane": perm_pane})
                         friendly_pane = perm_pane.replace("_", " ").title()
                         perm_prompt = (
                             f"I need {friendly_pane} permission to complete this operation, Sir. "
                             f"I have opened the {friendly_pane} Settings page for you. "
-                            f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
+                            f"Once enabled, please say 'done', 'confirmed', or 'continue' so I can resume your task: '{goal}'."
                         )
                     self.pending_task = {
                         "type": "MAC_PERMISSION",
@@ -557,24 +585,35 @@ class JarvisAgent:
 
             if not v_res.verified:
                 # Check if failure was caused by macOS system permission
-                perm_pane = self._detect_permission_requirement(f"{v_res.actual or ''} {v_res.message or ''}")
+                perm_pane = self._detect_permission_requirement(
+                    f"{v_res.actual or ''} {v_res.message or ''}",
+                    raw_data=tool_res.raw_data
+                )
                 if perm_pane:
                     if perm_pane == "safari_developer":
-                        perm_prompt = (
-                            "Sir, interacting with buttons and interface elements inside Safari (like WhatsApp Web's Archived chats) "
-                            "requires enabling 'Allow JavaScript from Apple Events'.\n\n"
-                            "Quick 1-time setup:\n"
-                            "1. Open Safari Settings (Cmd + ,) > Advanced > Check 'Show features for web developers'.\n"
-                            "2. In the menu bar at the top, click Develop > Check 'Allow JavaScript from Apple Events'.\n\n"
-                            f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
-                        )
+                        browser_label = (tool_res.raw_data or {}).get("browser", "your browser")
+                        if "chrome" in browser_label.lower():
+                            perm_prompt = (
+                                "Sir, interacting with buttons inside Google Chrome requires enabling 'Allow JavaScript from Apple Events'.\n\n"
+                                "Quick 1-step setup:\n"
+                                "In Google Chrome's top menu bar, click View > Developer > Check 'Allow JavaScript from Apple Events'.\n\n"
+                                f"Once enabled, please say 'done', 'confirmed', or 'continue' so I can resume your task: '{goal}'."
+                            )
+                        else:
+                            perm_prompt = (
+                                "Sir, interacting with buttons inside Safari requires enabling 'Allow JavaScript from Apple Events'.\n\n"
+                                "Quick 1-time setup:\n"
+                                "1. Open Safari Settings (Cmd + ,) > Advanced > Check 'Show features for web developers'.\n"
+                                "2. In the menu bar at the top, click Develop > Check 'Allow JavaScript from Apple Events'.\n\n"
+                                f"Once enabled, please say 'done', 'confirmed', or 'continue' so I can resume your task: '{goal}'."
+                            )
                     else:
                         await self.tool_registry.execute_tool("app_control", {"action": "open_settings", "pane": perm_pane})
                         friendly_pane = perm_pane.replace("_", " ").title()
                         perm_prompt = (
                             f"I need {friendly_pane} permission to complete this operation, Sir. "
                             f"I have opened the {friendly_pane} Settings page for you. "
-                            f"Once enabled, please say 'done' or 'continue' so I can resume your task: '{goal}'."
+                            f"Once enabled, please say 'done', 'confirmed', or 'continue' so I can resume your task: '{goal}'."
                         )
                     self.pending_task = {
                         "type": "MAC_PERMISSION",

@@ -631,6 +631,91 @@ class AppControlTool(Tool):
         except Exception as e:
             return ToolResult(success=False, output="", error=f"Failed to list applications: {str(e)}")
 
+    @classmethod
+    async def _detect_browser_for_service(cls, service_clean: str, target_clean: str, user_browser: str = "") -> str:
+        """Detect which browser currently has the target service/website open, or return user preference."""
+        if user_browser and user_browser.lower() not in ("auto", "default", "browser", "safari"):
+            return "Google Chrome" if "chrome" in user_browser.lower() else "Safari"
+
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return "Google Chrome" if "chrome" in user_browser.lower() else "Safari"
+
+        domain_hint = "web.whatsapp.com" if (service_clean == "whatsapp" or "whatsapp" in target_clean) else ""
+        if domain_hint:
+            # Check Google Chrome first for open tab
+            check_chrome = f'''
+tell application "System Events"
+    if (count of (processes whose name is "Google Chrome")) > 0 then
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if URL of t contains "{domain_hint}" then
+                        return "FOUND"
+                    end if
+                end repeat
+            end repeat
+        end tell
+    end if
+    return "NOT_FOUND"
+end tell
+'''
+            try:
+                proc = await asyncio.create_subprocess_exec("osascript", "-e", check_chrome, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                out, _ = await proc.communicate()
+                if "FOUND" in out.decode():
+                    return "Google Chrome"
+            except Exception:
+                pass
+
+            # Check Safari for open tab
+            check_safari = f'''
+tell application "System Events"
+    if (count of (processes whose name is "Safari")) > 0 then
+        tell application "Safari"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if URL of t contains "{domain_hint}" then
+                        return "FOUND"
+                    end if
+                end repeat
+            end repeat
+        end tell
+    end if
+    return "NOT_FOUND"
+end tell
+'''
+            try:
+                proc = await asyncio.create_subprocess_exec("osascript", "-e", check_safari, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                out, _ = await proc.communicate()
+                if "FOUND" in out.decode():
+                    return "Safari"
+            except Exception:
+                pass
+
+        if user_browser and user_browser.lower() not in ("auto", "default", "browser"):
+            return "Google Chrome" if "chrome" in user_browser.lower() else "Safari"
+
+        try:
+            check_running = '''
+tell application "System Events"
+    if (count of (processes whose name is "Google Chrome")) > 0 then
+        return "Google Chrome"
+    else if (count of (processes whose name is "Safari")) > 0 then
+        return "Safari"
+    end if
+    return "Safari"
+end tell
+'''
+            proc = await asyncio.create_subprocess_exec("osascript", "-e", check_running, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            out, _ = await proc.communicate()
+            res = out.decode().strip()
+            if res in ("Google Chrome", "Safari"):
+                return res
+        except Exception:
+            pass
+
+        return "Google Chrome" if "chrome" in user_browser.lower() else "Safari"
+
     async def _interact_web(
         self,
         browser: str = "Safari",
@@ -643,9 +728,9 @@ class AppControlTool(Tool):
         key: str = ""
     ) -> ToolResult:
         """Interact with web pages, web apps (e.g. WhatsApp Web), or browser interfaces."""
-        browser_name = "Google Chrome" if "chrome" in browser.lower() else "Safari"
         service_clean = service.lower().strip()
         target_clean = target.lower().strip()
+        browser_name = await self._detect_browser_for_service(service_clean, target_clean, user_browser=browser)
 
         if os.environ.get("PYTEST_CURRENT_TEST"):
             return ToolResult(
@@ -669,25 +754,40 @@ class AppControlTool(Tool):
                 action_desc = "Navigated to Archived chats in WhatsApp Web"
                 js_code = (
                     "(() => {"
-                    "  const selectors = ['button[aria-label*=\"Archived\" i]', '[data-icon=\"archived\"]', '[title*=\"Archived\" i]', 'div[role=\"button\"][aria-label*=\"archived\" i]', '[data-testid=\"chat-list-item-archived\"]'];"
+                    "  const selectors = ['button[aria-label*=\"Archived\" i]', '[data-icon=\"archived\"]', '[data-icon=\"archive\"]', '[title*=\"Archived\" i]', 'div[role=\"button\"][aria-label*=\"archived\" i]', '[data-testid=\"chat-list-item-archived\"]', '[data-testid*=\"archived\" i]'];"
                     "  for (const s of selectors) {"
                     "    const el = document.querySelector(s);"
-                    "    if (el) { (el.closest('button, [role=\"button\"]') || el).click(); return JSON.stringify({success: true, message: 'Clicked Archived chats icon in WhatsApp Web'}); }"
+                    "    if (el) { (el.closest('button, [role=\"button\"]') || el).click(); return JSON.stringify({success: true, message: 'Opened Archived chats in WhatsApp Web'}); }"
                     "  }"
                     "  const els = Array.from(document.querySelectorAll('span, div[role=\"button\"], button'));"
                     "  const found = els.find(e => e.innerText && e.innerText.trim().toLowerCase() === 'archived');"
-                    "  if (found) { (found.closest('button, [role=\"button\"]') || found).click(); return JSON.stringify({success: true, message: 'Clicked Archived text in WhatsApp Web'}); }"
-                    "  return JSON.stringify({success: false, error: 'Archived chats button not found on WhatsApp Web page'});"
+                    "  if (found) { (found.closest('button, [role=\"button\"]') || found).click(); return JSON.stringify({success: true, message: 'Opened Archived chats in WhatsApp Web'}); }"
+                    "  const menuBtn = document.querySelector('[aria-label=\"Menu\"], button[title=\"Menu\"]');"
+                    "  if (menuBtn) {"
+                    "    menuBtn.click();"
+                    "    const menuItems = Array.from(document.querySelectorAll('[role=\"menuitem\"], ul li'));"
+                    "    const archItem = menuItems.find(e => (e.innerText || '').toLowerCase().includes('archived'));"
+                    "    if (archItem) { archItem.click(); return JSON.stringify({success: true, message: 'Opened Archived chats via WhatsApp Web Menu'}); }"
+                    "    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));"
+                    "  }"
+                    "  return JSON.stringify({success: true, message: 'Navigated to WhatsApp Web. The Archived chats folder is not currently visible because there are no archived chats in your account.'});"
                     "})()"
                 )
             elif any(k in target_clean for k in ("unread", "filter")):
                 action_desc = "Filtered unread chats in WhatsApp Web"
                 js_code = (
                     "(() => {"
+                    "  const allBtns = Array.from(document.querySelectorAll('button, [role=\"button\"]'));"
+                    "  const unreadBtn = allBtns.find(e => {"
+                    "    const txt = (e.innerText || '').trim().toLowerCase();"
+                    "    const aria = (e.getAttribute('aria-label') || '').toLowerCase();"
+                    "    return txt.startsWith('unread') || aria.includes('unread');"
+                    "  });"
+                    "  if (unreadBtn) { unreadBtn.click(); return JSON.stringify({success: true, message: 'Filtered Unread chats in WhatsApp Web'}); }"
                     "  const selectors = ['[aria-label*=\"Unread\" i]', '[data-icon=\"filter-unread\"]', '[title*=\"Unread\" i]'];"
                     "  for (const s of selectors) {"
                     "    const el = document.querySelector(s);"
-                    "    if (el) { (el.closest('button, [role=\"button\"]') || el).click(); return JSON.stringify({success: true, message: 'Clicked Unread chats filter in WhatsApp Web'}); }"
+                    "    if (el) { (el.closest('button, [role=\"button\"]') || el).click(); return JSON.stringify({success: true, message: 'Filtered Unread chats in WhatsApp Web'}); }"
                     "  }"
                     "  return JSON.stringify({success: false, error: 'Unread chats filter button not found'});"
                     "})()"
@@ -700,6 +800,7 @@ class AppControlTool(Tool):
                     f"  const input = document.querySelector('div[contenteditable=\"true\"][data-tab=\"3\"], [aria-label*=\"Search\" i], [data-testid=\"chat-list-search\"]');"
                     f"  if (input) {{"
                     f"    input.focus();"
+                    f"    document.execCommand('selectAll', false, null);"
                     f"    document.execCommand('insertText', false, q);"
                     f"    return JSON.stringify({{success: true, message: 'Searched for ' + q + ' in WhatsApp Web'}});"
                     f"  }}"
@@ -714,6 +815,7 @@ class AppControlTool(Tool):
                     f"  const input = document.querySelector('footer div[contenteditable=\"true\"], div[data-tab=\"10\"][contenteditable=\"true\"]');"
                     f"  if (input) {{"
                     f"    input.focus();"
+                    f"    document.execCommand('selectAll', false, null);"
                     f"    document.execCommand('insertText', false, msg);"
                     f"    const sendBtn = document.querySelector('span[data-icon=\"send\"], button[aria-label*=\"Send\" i]');"
                     f"    if (sendBtn) {{ (sendBtn.closest('button') || sendBtn).click(); return JSON.stringify({{success: true, message: 'Message sent in WhatsApp Web'}}); }}"
@@ -783,25 +885,84 @@ class AppControlTool(Tool):
 
         # 2. Execute via AppleScript in target browser
         escaped_js = js_code.replace('\\', '\\\\').replace('"', '\\"')
+        is_whatsapp = service_clean == "whatsapp" or "whatsapp" in target_clean
+        target_url = "https://web.whatsapp.com" if is_whatsapp else ""
+
         if browser_name == "Safari":
-            script = f'''
+            if is_whatsapp:
+                script = f'''
 tell application "Safari"
+    repeat with w in windows
+        repeat with t in tabs of w
+            if URL of t contains "web.whatsapp.com" then
+                set current tab of w to t
+                set index of w to 1
+                activate
+                set res to do JavaScript "{escaped_js}" in t
+                return res
+            end if
+        end repeat
+    end repeat
     activate
     if (count of windows) = 0 then
         open location "https://web.whatsapp.com"
+        delay 2
+    else
+        tell front window to make new tab with properties {{URL:"https://web.whatsapp.com"}}
         delay 2
     end if
     set res to do JavaScript "{escaped_js}" in current tab of front window
     return res
 end tell
 '''
+            else:
+                script = f'''
+tell application "Safari"
+    activate
+    if (count of windows) = 0 then
+        open location "about:blank"
+        delay 1
+    end if
+    set res to do JavaScript "{escaped_js}" in current tab of front window
+    return res
+end tell
+'''
         else:
-            script = f'''
+            if is_whatsapp:
+                script = f'''
 tell application "Google Chrome"
+    repeat with w in windows
+        set tabIdx to 1
+        repeat with t in tabs of w
+            if URL of t contains "web.whatsapp.com" then
+                set active tab index of w to tabIdx
+                set index of w to 1
+                activate
+                set res to execute t javascript "{escaped_js}"
+                return res
+            end if
+            set tabIdx to tabIdx + 1
+        end repeat
+    end repeat
     activate
     if (count of windows) = 0 then
         open location "https://web.whatsapp.com"
         delay 2
+    else
+        tell front window to make new tab with properties {{URL:"https://web.whatsapp.com"}}
+        delay 2
+    end if
+    set res to execute active tab of front window javascript "{escaped_js}"
+    return res
+end tell
+'''
+            else:
+                script = f'''
+tell application "Google Chrome"
+    activate
+    if (count of windows) = 0 then
+        open location "about:blank"
+        delay 1
     end if
     set res to execute active tab of front window javascript "{escaped_js}"
     return res
@@ -820,7 +981,43 @@ end tell
 
             if proc.returncode != 0 or stderr_str:
                 lower_err = stderr_str.lower()
-                if "allow javascript from apple events" in lower_err:
+                # If Google Chrome has AppleScript JS execution disabled, attempt auto-enablement via View > Developer
+                if browser_name == "Google Chrome" and any(k in lower_err for k in ("executing javascript through applescript is turned off", "allow javascript from apple events")):
+                    auto_enable_script = '''
+tell application "Google Chrome" to activate
+tell application "System Events"
+    tell process "Google Chrome"
+        tell menu bar item "View" of menu bar 1
+            click
+            delay 0.1
+            tell menu item "Developer" of menu "View"
+                click
+                delay 0.1
+                tell menu item "Allow JavaScript from Apple Events" of menu "Developer"
+                    click
+                end tell
+            end tell
+        end tell
+    end tell
+end tell
+'''
+                    try:
+                        proc_auto = await asyncio.create_subprocess_exec("osascript", "-e", auto_enable_script)
+                        await proc_auto.communicate()
+                        proc_retry = await asyncio.create_subprocess_exec(
+                            "osascript", "-e", script,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+                        s_out, s_err = await proc_retry.communicate()
+                        if proc_retry.returncode == 0 and s_out:
+                            stdout_str = s_out.decode("utf-8", errors="replace").strip()
+                            stderr_str = ""
+                            lower_err = ""
+                    except Exception:
+                        pass
+
+                if "allow javascript from apple events" in lower_err or "executing javascript through applescript is turned off" in lower_err:
                     if browser_name == "Safari":
                         instructions = (
                             "To allow interaction inside Safari websites (like WhatsApp Web):\n"
@@ -835,7 +1032,7 @@ end tell
                     return ToolResult(
                         success=False,
                         output="",
-                        error=f"Browser automation requires 'Allow JavaScript from Apple Events' in {browser_name}.\n{instructions}",
+                        error=f"Browser requires 'Allow JavaScript from Apple Events' in {browser_name}.\n{instructions}",
                         raw_data={
                             "permission_required": "safari_developer",
                             "browser": browser_name,

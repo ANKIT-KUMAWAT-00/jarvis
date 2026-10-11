@@ -399,4 +399,44 @@ async def test_browser_type_text(agent):
     assert step["parameters"]["text"] == "hello"
 
 
+@pytest.mark.asyncio
+async def test_permission_detection_safari_developer_not_automation(agent):
+    """Ensure 'Allow JavaScript from Apple Events' maps to safari_developer and never falsely triggers automation pane."""
+    err_text = "Browser requires 'Allow JavaScript from Apple Events' in Google Chrome.\nIn Chrome's top menu bar, click View > Developer > Check 'Allow JavaScript from Apple Events'."
+    detected = agent._detect_permission_requirement(err_text, raw_data={"permission_required": "safari_developer"})
+    assert detected == "safari_developer"
+
+    detected_text = agent._detect_permission_requirement(err_text)
+    assert detected_text == "safari_developer"
+
+
+@pytest.mark.asyncio
+async def test_mac_permission_resumption_with_confirmed(agent):
+    """Saying 'confirmed', 'confirm', or 'i confirmed' must resume a pending MAC_PERMISSION task."""
+    agent.pending_task = {
+        "type": "MAC_PERMISSION",
+        "original_goal": "in my whatsapp go to archived chats",
+        "waiting_for": "permission_grant"
+    }
+    res = await agent.run("confirmed")
+    assert agent.pending_task is None
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_user_criticism_recovers_pending_task(agent):
+    """User reporting that automation tool is opening and not working after confirmation must recover and execute unfulfilled goal."""
+    agent.pending_task = {
+        "type": "MAC_PERMISSION",
+        "original_goal": "in my whatsapp go to archived chats",
+        "waiting_for": "permission_grant"
+    }
+    res = await agent.run("now it is opening the automtion tool but it is not working after confirmation also")
+    assert agent.pending_task is None
+    assert res["state"] == "COMPLETED"
+    assert res["verified"] is True
+
+
+
 
