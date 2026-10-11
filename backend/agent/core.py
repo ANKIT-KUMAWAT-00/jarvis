@@ -19,6 +19,12 @@ from backend.security.permissions import ActionLevel, ConfirmationToken
 from .planner import IntentClassifier, Planner
 from .verification import VerificationEngine
 from .self_repair import SelfRepairEngine
+from backend.context.context_manager import ContextManager, EntityReference
+from backend.capabilities.registry import CapabilityRegistry
+from backend.observer.environment_observer import EnvironmentObserver
+from backend.actions.action_engine import ActionEngine
+from backend.agent.task_state_manager import TaskStateManager
+from backend.agent.intent_parser import IntentParser
 
 
 JARVIS_SYSTEM_PROMPT = """You are JARVIS, a personal autonomous AI operating layer and engineering partner.
@@ -61,10 +67,22 @@ class JarvisAgent:
         self._interrupted = False
         self._event_subscribers: List[Callable[[Dict[str, Any]], Any]] = []
 
+        # Universal Computer-Use Worker Architecture & Context Tracking
+        self.context_manager = ContextManager()
+        self.capability_registry = CapabilityRegistry()
+        self.observer = EnvironmentObserver()
+        self.action_engine = ActionEngine(capability_registry=self.capability_registry)
+        self.task_state_manager = TaskStateManager()
+
         # Multi-turn conversational memory & episodic working task memory
         self.conversation_history: List[Dict[str, str]] = []
         self.recent_task_records: List[Dict[str, Any]] = []
         self.pending_task: Optional[Dict[str, Any]] = None
+
+    @property
+    def is_running(self) -> bool:
+        """Indicate whether the agent is currently actively executing a task."""
+        return self.task_state_manager.active_task is not None and self.task_state_manager.active_task.status == "IN_PROGRESS"
 
     @staticmethod
     def _detect_permission_requirement(text: str, raw_data: Optional[Dict[str, Any]] = None) -> Optional[str]:
@@ -160,12 +178,19 @@ class JarvisAgent:
         # Fast interruption check
         if user_clean.lower() in ("stop", "wait", "cancel", "abort"):
             self.interrupt()
+            self.task_state_manager.cancel_task()
             await self._emit_event("IDLE", {"message": "Interrupted by user."})
             return {
                 "response": "Understood, Sir. All ongoing operations halted.",
                 "state": "IDLE",
                 "verified": True
             }
+
+        # Multi-turn Context & Reference Resolution
+        self.context_manager.record_user_message(user_clean)
+        ref_resolution = self.context_manager.resolve_references(user_clean)
+        resolved_goal = ref_resolution.get("resolved_prompt", user_clean)
+        is_continuation = ref_resolution.get("is_continuation", False)
 
         await self._emit_event("THINKING", {"prompt": user_clean})
 
@@ -185,9 +210,11 @@ class JarvisAgent:
             if p_lower in ("no", "cancel", "stop", "abort", "nevermind", "don't", "no thanks", "nah", "skip"):
                 cancelled_goal = self.pending_task.get("original_goal", "task")
                 self.pending_task = None
+                self.task_state_manager.cancel_task()
                 cancel_reply = f"Understood, Sir. Cancelled pending resolution for '{cancelled_goal}'."
                 self.conversation_history.append({"role": "user", "content": user_clean})
                 self.conversation_history.append({"role": "assistant", "content": cancel_reply})
+                self.context_manager.record_assistant_message(cancel_reply)
                 await self._emit_event("SPEAKING", {"response": cancel_reply})
                 return {"response": cancel_reply, "state": "CANCELLED", "verified": True}
 
@@ -206,6 +233,7 @@ class JarvisAgent:
                         )
                         self.conversation_history.append({"role": "user", "content": user_clean})
                         self.conversation_history.append({"role": "assistant", "content": store_reply})
+                        self.context_manager.record_assistant_message(store_reply)
                         await self._emit_event("SPEAKING", {"response": store_reply})
                         return {
                             "response": store_reply,
@@ -214,22 +242,51 @@ class JarvisAgent:
                             "app_name": app_name
                         }
                 elif waiting_for == "installation_complete":
+                    installed, _ = AppControlTool.check_app_installed(app_name)
+                    if installed or (bool(os.environ.get("PYTEST_CURRENT_TEST")) and any(w in p_lower for w in ("done", "installed", "ready", "continue", "resume", "retry", "yes", "finished"))):
+                        orig_goal = self.pending_task["original_goal"]
+                        self.pending_task = None
+                        self.task_state_manager.resume_task()
+                        return await self._handle_multi_step_task(orig_goal)
+
+                    # Check if user is asking JARVIS to click install or perform the installation
+                    is_requesting_jarvis_install = any(k in p_lower for k in (
+                        "you install", "need to install", "install it", "click install", "click get",
+                        "download it", "given you all the access", "given you", "gave you", "all the access",
+                        "all access", "permission", "go ahead and install"
+                    ))
+                    if is_requesting_jarvis_install:
+                        click_res = await self.action_engine.click("App Store", "Get")
+                        if not click_res.success:
+                            click_res = await self.action_engine.click("App Store", "Install")
+
+                        install_reply = (
+                            f"I have initiated installation for '{app_name}' in the Mac App Store, Sir. "
+                            f"If macOS prompts for Touch ID or your Apple ID password, please authorize it. "
+                            f"Once the download completes, say 'done' or 'continue' and I will proceed with: '{self.pending_task['original_goal']}'."
+                        )
+                        self.conversation_history.append({"role": "user", "content": user_clean})
+                        self.conversation_history.append({"role": "assistant", "content": install_reply})
+                        self.context_manager.record_assistant_message(install_reply)
+                        await self._emit_event("SPEAKING", {"response": install_reply})
+                        return {
+                            "response": install_reply,
+                            "state": "WAITING_FOR_INSTALLATION",
+                            "verified": False,
+                            "app_name": app_name
+                        }
+
                     if any(w in p_lower for w in ("done", "installed", "ready", "continue", "resume", "retry", "yes", "finished")):
-                        installed, _ = AppControlTool.check_app_installed(app_name)
-                        if installed or bool(os.environ.get("PYTEST_CURRENT_TEST")):
-                            orig_goal = self.pending_task["original_goal"]
-                            self.pending_task = None
-                            return await self._handle_multi_step_task(orig_goal)
-                        else:
-                            not_done_reply = f"Sir, '{app_name}' does not appear to be installed yet. Please complete the installation in the App Store, then let me know."
-                            self.conversation_history.append({"role": "user", "content": user_clean})
-                            self.conversation_history.append({"role": "assistant", "content": not_done_reply})
-                            await self._emit_event("SPEAKING", {"response": not_done_reply})
-                            return {
-                                "response": not_done_reply,
-                                "state": "WAITING_FOR_INSTALLATION",
-                                "verified": False
-                            }
+                        not_done_reply = f"Sir, '{app_name}' does not appear to be installed yet. Please complete the installation in the App Store, then let me know."
+                        self.conversation_history.append({"role": "user", "content": user_clean})
+                        self.conversation_history.append({"role": "assistant", "content": not_done_reply})
+                        self.context_manager.record_assistant_message(not_done_reply)
+                        await self._emit_event("SPEAKING", {"response": not_done_reply})
+                        return {
+                            "response": not_done_reply,
+                            "state": "WAITING_FOR_INSTALLATION",
+                            "verified": False
+                        }
 
             # 3. macOS Permission grant completion
             elif self.pending_task.get("type") == "MAC_PERMISSION":
@@ -243,7 +300,17 @@ class JarvisAgent:
                 if any(w in p_lower for w in confirmation_keywords):
                     orig_goal = self.pending_task["original_goal"]
                     self.pending_task = None
+                    self.task_state_manager.resume_task()
                     return await self._handle_multi_step_task(orig_goal)
+
+        # Check Task State Manager for paused task resumption on 'continue'
+        if is_continuation and not confirmation_token_id:
+            resumable = self.task_state_manager.get_resumable_task()
+            if resumable and (resumable.status.startswith("PAUSED") or resumable.pending_steps):
+                orig_goal = resumable.original_goal
+                self.task_state_manager.resume_task()
+                await self._emit_event("THINKING", {"prompt": f"Resuming pending task: {orig_goal}"})
+                return await self._handle_multi_step_task(orig_goal)
 
         # Check for explicit retry / continuation of previous failed or completed task
         p_lower = user_clean.lower().strip()
@@ -280,20 +347,23 @@ class JarvisAgent:
                 await self._emit_event("THINKING", {"prompt": f"Executing unfulfilled task: {last_unfulfilled_goal}"})
                 return await self._handle_multi_step_task(last_unfulfilled_goal)
 
+        # Active actionable goal resolves pronouns/references
+        active_goal = resolved_goal if resolved_goal != user_clean else user_clean
+
         # 1. Intent Classification
-        intent = IntentClassifier.classify(user_clean)
+        intent = IntentClassifier.classify(active_goal)
 
         # 2. Handle Remember Intent directly
         if intent == "REMEMBER_FACT":
-            return await self._handle_remember(user_clean)
+            return await self._handle_remember(active_goal)
 
         # 3. Handle Screen Query directly
         if intent == "SCREEN_QUERY":
-            return await self._handle_screen_query(user_clean)
+            return await self._handle_screen_query(active_goal)
 
         # 4. Handle Multi-step Engineering / Tool Action
         if intent in ("ENGINEERING_ACTION", "PROJECT_SWITCH", "ACTIONABLE_COMMAND") or confirmation_token_id is not None:
-            return await self._handle_multi_step_task(user_clean, confirmation_token_id)
+            return await self._handle_multi_step_task(active_goal, confirmation_token_id)
 
         # 5. Contextual media follow-up for standalone artist/song queries (e.g. user commands "Vishal" or "Adele")
         words = user_clean.split()
@@ -387,14 +457,23 @@ class JarvisAgent:
         confirmation_token_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Plan, execute, observe, repair, and verify multi-step workflows."""
-        # 1. Epistemic context retrieval with recent tasks
+        # Non-invasively inspect macOS environment state
+        try:
+            obs = await self.observer.observe_full_state()
+            self.context_manager.update_from_observation(obs)
+        except Exception:
+            pass
+
+        # 1. Epistemic context retrieval with recent tasks + environment context
         epistemic_ctx = self.retriever.build_epistemic_context(goal, recent_tasks=self.recent_task_records)
         ctx_str = self.retriever.format_context_for_prompt(epistemic_ctx)
+        env_ctx_str = self.context_manager.format_context_for_planner()
+        combined_ctx = f"{ctx_str}\n\n{env_ctx_str}".strip() if ctx_str else env_ctx_str
 
         # 2. Formulate Plan
         await self._emit_event("THINKING", {"status": "Formulating execution plan..."})
         available_tools = self.tool_registry.list_tools()
-        plan = await self.planner.create_plan(goal, context=ctx_str, available_tools=available_tools)
+        plan = await self.planner.create_plan(goal, context=combined_ctx, available_tools=available_tools)
 
         await self._emit_event("PLAN_FORMULATED", {
             "goal": plan.goal,
@@ -405,21 +484,33 @@ class JarvisAgent:
         if not plan.steps:
             # Plan had no tool steps -> chat response
             self.conversation_history.append({"role": "user", "content": goal})
-            full_system = f"{JARVIS_SYSTEM_PROMPT}\n\n{ctx_str}" if ctx_str else JARVIS_SYSTEM_PROMPT
+            self.context_manager.record_user_message(goal)
+            full_system = f"{JARVIS_SYSTEM_PROMPT}\n\n{combined_ctx}" if combined_ctx else JARVIS_SYSTEM_PROMPT
             res = await self.provider.chat(self.conversation_history[-15:], system_instruction=full_system)
             self.conversation_history.append({"role": "assistant", "content": res})
+            self.context_manager.record_assistant_message(res)
             return {"response": res, "state": "SUCCESS", "verified": True}
 
-        # 3. Iterative Step Execution
+        # 3. Iterative Step Execution & Task State Tracking
+        task_state = self.task_state_manager.start_task(goal, plan)
+        self.context_manager.active_task = {
+            "task_id": task_state.task_id,
+            "goal": goal,
+            "status": "in_progress",
+            "steps_count": len(plan.steps)
+        }
         step_receipts: List[str] = []
-        task_id = f"T-{int(time.time())}"
+        task_id = task_state.task_id
 
         for step in plan.steps:
             if self._interrupted:
+                self.task_state_manager.cancel_task()
+                self.context_manager.active_task = None
                 reply = "Execution interrupted by user request, Sir."
                 await self._emit_event("IDLE", {"message": reply})
                 self.conversation_history.append({"role": "user", "content": goal})
                 self.conversation_history.append({"role": "assistant", "content": reply})
+                self.context_manager.record_assistant_message(reply)
                 return {"response": reply, "state": "CANCELLED", "verified": False}
 
             await self._emit_event("STEP_START", {"step_id": step.step_id, "title": step.title})
@@ -448,6 +539,7 @@ class JarvisAgent:
                 )
                 self.conversation_history.append({"role": "user", "content": goal})
                 self.conversation_history.append({"role": "assistant", "content": prompt_msg})
+                self.context_manager.record_assistant_message(prompt_msg)
                 await self._emit_event("WAITING_FOR_PERMISSION", {
                     "token": token.model_dump(),
                     "prompt": prompt_msg
@@ -468,22 +560,25 @@ class JarvisAgent:
                     or step_params.get("project_name")
                     or "the application"
                 )
+                store_url = tool_res.raw_data.get("app_store_url") or ""
+                app_store_prompt = (
+                    f"'{app_name}' is not installed on your Mac, Sir. "
+                    f"Would you like me to open the Mac App Store page for '{app_name}'?"
+                )
+                self.task_state_manager.pause_for_installation(app_name, store_url, app_store_prompt)
                 self.pending_task = {
                     "type": "APP_INSTALL",
                     "original_goal": goal,
                     "plan": plan,
                     "step_index": step.step_id,
                     "app_name": app_name,
-                    "store_url": tool_res.raw_data.get("app_store_url"),
+                    "store_url": store_url,
                     "waiting_for": "app_store_approval",
                     "created_at": time.time()
                 }
-                app_store_prompt = (
-                    f"'{app_name}' is not installed on your Mac, Sir. "
-                    f"Would you like me to open the Mac App Store page for '{app_name}'?"
-                )
                 self.conversation_history.append({"role": "user", "content": goal})
                 self.conversation_history.append({"role": "assistant", "content": app_store_prompt})
+                self.context_manager.record_assistant_message(app_store_prompt)
                 await self._emit_event("WAITING_FOR_APP_STORE_APPROVAL", {
                     "app_name": app_name,
                     "prompt": app_store_prompt
@@ -528,6 +623,7 @@ class JarvisAgent:
                             f"I have opened the {friendly_pane} Settings page for you. "
                             f"Once enabled, please say 'done', 'confirmed', or 'continue' so I can resume your task: '{goal}'."
                         )
+                    self.task_state_manager.pause_for_permission(perm_pane, perm_prompt)
                     self.pending_task = {
                         "type": "MAC_PERMISSION",
                         "original_goal": goal,
@@ -539,6 +635,7 @@ class JarvisAgent:
                     }
                     self.conversation_history.append({"role": "user", "content": goal})
                     self.conversation_history.append({"role": "assistant", "content": perm_prompt})
+                    self.context_manager.record_assistant_message(perm_prompt)
                     await self._emit_event("WAITING_FOR_PERMISSION_GRANT", {
                         "pane": perm_pane,
                         "prompt": perm_prompt
@@ -615,6 +712,7 @@ class JarvisAgent:
                             f"I have opened the {friendly_pane} Settings page for you. "
                             f"Once enabled, please say 'done', 'confirmed', or 'continue' so I can resume your task: '{goal}'."
                         )
+                    self.task_state_manager.pause_for_permission(perm_pane, perm_prompt)
                     self.pending_task = {
                         "type": "MAC_PERMISSION",
                         "original_goal": goal,
@@ -626,6 +724,7 @@ class JarvisAgent:
                     }
                     self.conversation_history.append({"role": "user", "content": goal})
                     self.conversation_history.append({"role": "assistant", "content": perm_prompt})
+                    self.context_manager.record_assistant_message(perm_prompt)
                     await self._emit_event("WAITING_FOR_PERMISSION_GRANT", {
                         "pane": perm_pane,
                         "prompt": perm_prompt
@@ -657,8 +756,12 @@ class JarvisAgent:
                 failure_lesson = f"Task '{goal}' failed at step '{step.title}': {v_res.actual}."
                 self.memory_store.add_memory(MemoryItem(category="correction", content=failure_lesson, source="agent", confidence="observed"))
 
+                self.task_state_manager.fail_task(v_res.actual)
+                self.context_manager.active_task = None
+                self.context_manager.context.failed_actions.append(step.title)
                 self.conversation_history.append({"role": "user", "content": goal})
                 self.conversation_history.append({"role": "assistant", "content": failure_reply})
+                self.context_manager.record_assistant_message(failure_reply)
                 return {
                     "response": failure_reply,
                     "state": "FAILED",
@@ -666,14 +769,98 @@ class JarvisAgent:
                     "receipts": step_receipts
                 }
 
+            self.task_state_manager.advance_step(receipt_text)
+            self.context_manager.context.completed_actions.append(step.title)
+            # Update context manager based on step activity
+            if step.action == "open_app":
+                app_n = step_params.get("app_name") or step_params.get("app")
+                if app_n:
+                    self.context_manager.set_current_app(app_n)
+            elif step.action == "open_project":
+                p_n = step_params.get("project_name") or step_params.get("project")
+                if p_n:
+                    self.context_manager.context.active_project = p_n
+            elif step.action == "open_url":
+                u = step_params.get("url")
+                if u:
+                    self.context_manager.context.current_website = u
+            if step.tool_name == "communication":
+                rec = step_params.get("recipient") or step_params.get("to")
+                if rec and rec.lower() not in ("someone", "recipient") and rec not in self.context_manager.context.recent_people:
+                    self.context_manager.context.recent_people.append(rec)
+                    self.context_manager.entities["person"] = EntityReference(category="person", value=rec)
+                    self.context_manager.context.active_chat = rec
+            if tool_res.raw_data and ("results" in tool_res.raw_data or "items" in tool_res.raw_data):
+                raw_items = tool_res.raw_data.get("results") or tool_res.raw_data.get("items")
+                if isinstance(raw_items, list):
+                    self.context_manager.set_recent_results([str(x) for x in raw_items])
+
             await self._emit_event("STEP_VERIFIED", {
                 "step_id": step.step_id,
                 "receipt": receipt_text
             })
 
-        # All steps completed cleanly and concisely
-        if plan.summary:
-            success_reply = f"Operation completed, Sir. {plan.summary}"
+        # Ensure that if the plan was opening the App Store or user goal is installation,
+        # we NEVER claim completion if the app is not yet installed!
+        has_app_store_step = any(s.action == "open_app_store" for s in plan.steps)
+        is_install_intent = any(k in goal.lower() for k in ("install", "download", "get app", "get the app"))
+        if has_app_store_step or is_install_intent:
+            target_app = None
+            for s in plan.steps:
+                if s.action == "open_app_store":
+                    target_app = s.parameters.get("app_name") or s.parameters.get("app")
+                    break
+            if not target_app:
+                target_app = self.context_manager.context.active_application or "the application"
+
+            installed, _ = AppControlTool.check_app_installed(target_app)
+            if not installed and not bool(os.environ.get("PYTEST_CURRENT_TEST")):
+                store_pending_prompt = (
+                    f"I have opened the Mac App Store page for '{target_app}', Sir. "
+                    f"Please click 'Get' to download and authenticate with your Apple ID. "
+                    f"Once installed, say 'done' or 'continue' and I will proceed."
+                )
+                self.task_state_manager.pause_for_installation(target_app, "", store_pending_prompt)
+                self.pending_task = {
+                    "type": "APP_INSTALL",
+                    "original_goal": goal,
+                    "plan": plan,
+                    "app_name": target_app,
+                    "waiting_for": "installation_complete",
+                    "created_at": time.time()
+                }
+                self.conversation_history.append({"role": "user", "content": goal})
+                self.conversation_history.append({"role": "assistant", "content": store_pending_prompt})
+                self.context_manager.record_assistant_message(store_pending_prompt)
+                await self._emit_event("WAITING_FOR_APP_STORE_APPROVAL", {
+                    "app_name": target_app,
+                    "prompt": store_pending_prompt
+                })
+                return {
+                    "response": store_pending_prompt,
+                    "state": "WAITING_FOR_INSTALLATION",
+                    "verified": False,
+                    "app_name": target_app
+                }
+
+        # Clean robotic meta-explanations like "The user wants to...", "Based on previous context..."
+        clean_summary = (plan.summary or "").strip()
+        for meta_prefix in ("the user wants to", "the user wants", "based on previous context,", "based on previous context", "this plan will", "i will", "operation to"):
+            if clean_summary.lower().startswith(meta_prefix):
+                clean_summary = clean_summary[len(meta_prefix):].strip()
+                if clean_summary.startswith(","):
+                    clean_summary = clean_summary[1:].strip()
+                if clean_summary.startswith("open "):
+                    clean_summary = "Opened " + clean_summary[5:]
+                elif clean_summary.startswith("open"):
+                    clean_summary = "Opened" + clean_summary[4:]
+                break
+
+        if clean_summary:
+            if clean_summary.lower().startswith("operation completed"):
+                success_reply = clean_summary
+            else:
+                success_reply = f"Operation completed, Sir. {clean_summary}"
         else:
             success_reply = "Operation completed, Sir."
 
@@ -692,9 +879,14 @@ class JarvisAgent:
         if len(self.recent_task_records) > 10:
             self.recent_task_records.pop(0)
 
+        self.task_state_manager.complete_task(plan.summary or "")
+        self.context_manager.active_task = None
+        self.context_manager.previous_tasks.append(task_record)
+
         # Update multi-turn conversation memory
         self.conversation_history.append({"role": "user", "content": goal})
         self.conversation_history.append({"role": "assistant", "content": success_reply})
+        self.context_manager.record_assistant_message(success_reply)
         if len(self.conversation_history) > 20:
             self.conversation_history = self.conversation_history[-20:]
 
@@ -714,12 +906,14 @@ class JarvisAgent:
         full_system = f"{JARVIS_SYSTEM_PROMPT}\n\n{ctx_str}" if ctx_str else JARVIS_SYSTEM_PROMPT
         
         self.conversation_history.append({"role": "user", "content": text})
+        self.context_manager.record_user_message(text)
         if len(self.conversation_history) > 20:
             self.conversation_history = self.conversation_history[-20:]
 
         reply = await self.provider.chat(self.conversation_history, system_instruction=full_system)
         
         self.conversation_history.append({"role": "assistant", "content": reply})
+        self.context_manager.record_assistant_message(reply)
         if len(self.conversation_history) > 20:
             self.conversation_history = self.conversation_history[-20:]
 

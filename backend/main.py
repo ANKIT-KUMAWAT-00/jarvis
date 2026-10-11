@@ -245,7 +245,7 @@ async def handle_chat(req: ChatRequest):
     now = time.time()
     async with chat_lock:
         last_seen = recent_chat_requests.get(clean_prompt.lower(), 0.0)
-        if not req.token_id and (now - last_seen < 3.0):
+        if not req.token_id and (now - last_seen < 3.0) and agent.is_running:
             logger.warning(f"Server-side deduplication: dropping identical rapid prompt '{clean_prompt[:30]}'")
             return {
                 "response": "Understood, Sir. Command is already in progress.",

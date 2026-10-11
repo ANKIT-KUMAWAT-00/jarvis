@@ -6,6 +6,7 @@ unit tests, preflight checks, and demonstrations without API keys.
 
 import json
 import re
+import urllib.parse
 from typing import List, Dict, Any, Optional, Type
 from pydantic import BaseModel
 from .base import LLMProvider, PlanResult, PlanStep, TaskObject, TaskAction, TaskDependency
@@ -66,8 +67,257 @@ class MockProvider(LLMProvider):
         words = re.findall(r'\b[a-zA-Z0-9_-]+\b', g_lower)
         first_word = words[0] if words else ""
 
+        # Contextual entity extraction from formatted prompt context
+        ctx_app = None
+        ctx_project = None
+        ctx_chat = None
+        ctx_people = []
+        if context:
+            for line in context.splitlines():
+                if "Active Application:" in line:
+                    ctx_app = line.split("Active Application:")[1].strip()
+                elif "Current Project:" in line:
+                    ctx_project = line.split("Current Project:")[1].strip()
+                elif "Active Chat / Contact:" in line:
+                    ctx_chat = line.split("Active Chat / Contact:")[1].strip()
+                elif "Recently Mentioned People:" in line:
+                    ctx_people = [p.strip() for p in line.split("Recently Mentioned People:")[1].split(",") if p.strip()]
+
+        # UNIVERSAL COMPUTER-USE WORKER COMPOUND WORKFLOWS
+        # 1. WhatsApp: "Open WhatsApp and open Krishna's chat" / "Open WhatsApp and message Krishna" / "Take me to Krishna's chat"
+        is_whatsapp_compound = (
+            ("whatsapp" in g_lower and any(k in g_lower for k in ("and open", "and message", "and chat", "and text", "and send", "krishna's chat", "open chat with", "message to", "take me to"))) or
+            ((ctx_app == "WhatsApp" or "whatsapp" in (context or "").lower()) and any(k in g_lower for k in ("chat", "take me to", "message")) and not any(k in g_lower for k in ("archived", "archive", "unread", "filter", "show unread")))
+        )
+        if is_whatsapp_compound:
+            m_rec = re.search(r'(?:chat(?:\s+with)?|to|message)\s+([A-Z][a-zA-Z0-9_\s]+?)(?:\s+(?:on|using|in|that|about)|$|\.)', actual_goal)
+            rec = m_rec.group(1).strip() if m_rec else (ctx_chat or (ctx_people[0] if ctx_people else "Krishna"))
+            if rec.lower() in ("whatsapp", "chat", "message", "the app", "her", "him"):
+                rec = ctx_chat or (ctx_people[0] if ctx_people else "Krishna")
+
+            m_msg = re.search(r'(?:that|message:?|saying:?)\s+["\']?([^"\']+)["\']?$', actual_goal, re.IGNORECASE)
+            msg_text = m_msg.group(1).strip() if m_msg else ""
+
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Open WhatsApp",
+                    tool_name="app_control",
+                    action="open_app",
+                    parameters={"app_name": "WhatsApp"},
+                    expected_outcome="WhatsApp launched and active",
+                    risk_level=1
+                ),
+                PlanStep(
+                    step_id=2,
+                    title=f"Locate and open chat for '{rec}' in WhatsApp",
+                    tool_name="app_control",
+                    action="interact_web",
+                    parameters={"service": "whatsapp", "target": rec, "query": rec, "action": "interact_web"},
+                    expected_outcome=f"Chat with '{rec}' opened in WhatsApp",
+                    risk_level=1
+                )
+            ]
+            if msg_text:
+                steps.append(
+                    PlanStep(
+                        step_id=3,
+                        title=f"Send message to '{rec}'",
+                        tool_name="communication",
+                        action="send_message",
+                        parameters={"to": rec, "message": msg_text},
+                        expected_outcome=f"Message '{msg_text}' sent to '{rec}'",
+                        risk_level=2
+                    )
+                )
+
+            task_obj = TaskObject(
+                intent="open_chat",
+                target=rec,
+                actions=[TaskAction(type="open_chat", target=rec, parameters={"app": "WhatsApp", "recipient": rec})],
+                dependencies=[TaskDependency(type="application_installed", name="WhatsApp")],
+                status="pending"
+            )
+            return PlanResult(
+                goal=actual_goal,
+                intent="computer_worker",
+                requires_tools=True,
+                summary=f"Opened WhatsApp and accessed {rec}'s chat.",
+                steps=steps,
+                verification_criteria=f"WhatsApp open and {rec}'s chat verified.",
+                task_object=task_obj
+            )
+
+        # 2. VS Code & Run Project: "Open VS Code and run my project" / "Run it" (with project context)
+        is_vscode_run = (
+            (any(v in g_lower for v in ("vs code", "vscode", "code")) and any(k in g_lower for k in ("and run", "run my project", "run project", "build"))) or
+            ((ctx_project or "project" in (context or "").lower()) and g_lower in ("run it", "run the project", "run it now", "run it.", "run", "build it"))
+        )
+        if is_vscode_run:
+            m_proj = re.search(r'(?:open\s+(?:my\s+)?|run\s+(?:my\s+)?)?([a-zA-Z0-9_\-]+)\s+project', actual_goal, re.IGNORECASE)
+            proj_name = m_proj.group(1).strip() if (m_proj and m_proj.group(1).lower() not in ("the", "a", "my")) else (ctx_project or "ResumeIQ")
+            if proj_name.lower() == "resumeiq":
+                proj_name = "ResumeIQ"
+
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open project '{proj_name}' in Visual Studio Code",
+                    tool_name="app_control",
+                    action="open_project",
+                    parameters={"project_name": proj_name, "editor": "Visual Studio Code"},
+                    expected_outcome=f"Project '{proj_name}' opened in Visual Studio Code",
+                    risk_level=1
+                ),
+                PlanStep(
+                    step_id=2,
+                    title=f"Run project '{proj_name}' via terminal",
+                    tool_name="terminal",
+                    action="run_command",
+                    parameters={"command": f"echo 'Running {proj_name} project...'"},
+                    expected_outcome=f"Project '{proj_name}' running in terminal",
+                    risk_level=1
+                )
+            ]
+            task_obj = TaskObject(
+                intent="run_project",
+                target=proj_name,
+                actions=[TaskAction(type="run_project", target=proj_name, parameters={"project": proj_name})],
+                dependencies=[TaskDependency(type="application_installed", name="Visual Studio Code")],
+                status="pending"
+            )
+            return PlanResult(
+                goal=actual_goal,
+                intent="computer_worker",
+                requires_tools=True,
+                summary=f"Opened '{proj_name}' in Visual Studio Code and started runtime execution.",
+                steps=steps,
+                verification_criteria=f"Project '{proj_name}' opened in VS Code and executed.",
+                task_object=task_obj
+            )
+
+        # 3. Spotify & Play Playlist: "Open Spotify and play my playlist" / "Play my workout playlist" (with Spotify context)
+        is_spotify_compound = (
+            ("spotify" in g_lower and any(k in g_lower for k in ("and play", "play my playlist", "play playlist", "play my"))) or
+            ((ctx_app == "Spotify" or "spotify" in (context or "").lower()) and "playlist" in g_lower and "play" in g_lower)
+        )
+        if is_spotify_compound:
+            m_pl = re.search(r'(?:play|open)\s+(?:my\s+)?([a-zA-Z0-9_\s]+?)\s+playlist', actual_goal, re.IGNORECASE)
+            plist = m_pl.group(1).strip() if m_pl else "workout"
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Open Spotify",
+                    tool_name="app_control",
+                    action="open_app",
+                    parameters={"app_name": "Spotify"},
+                    expected_outcome="Spotify launched",
+                    risk_level=1
+                ),
+                PlanStep(
+                    step_id=2,
+                    title=f"Play '{plist}' playlist in Spotify",
+                    tool_name="app_control",
+                    action="play_media",
+                    parameters={"query": f"{plist} playlist", "service": "spotify"},
+                    expected_outcome=f"Playing '{plist}' in Spotify",
+                    risk_level=1
+                )
+            ]
+            task_obj = TaskObject(
+                intent="play_music",
+                target="Spotify",
+                actions=[TaskAction(type="play_media", target="Spotify", parameters={"query": plist})],
+                dependencies=[TaskDependency(type="application_installed", name="Spotify")],
+                status="pending"
+            )
+            return PlanResult(
+                goal=actual_goal,
+                intent="computer_worker",
+                requires_tools=True,
+                summary=f"Opened Spotify and playing '{plist}' playlist.",
+                steps=steps,
+                verification_criteria=f"Spotify playback of '{plist}' verified.",
+                task_object=task_obj
+            )
+
+        # 4. Safari and search: "Open Safari and search for something" / "Open Safari and search for X"
+        is_safari_search_compound = "safari" in g_lower and any(k in g_lower for k in ("and search", "and search for", "and look up", "search for something", "search for"))
+        if is_safari_search_compound:
+            m_q = re.search(r'(?:search(?:\s+for)?|look\s+up)\s+(.+?)(?:\s+in\s+safari)?$', actual_goal, re.IGNORECASE)
+            search_query = m_q.group(1).strip() if m_q else "something"
+            encoded = urllib.parse.quote(search_query)
+            search_url = f"https://www.google.com/search?q={encoded}"
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title=f"Open Safari and search Google for '{search_query}'",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": search_url, "browser": "Safari"},
+                    expected_outcome=f"Search results for '{search_query}' displayed in Safari",
+                    risk_level=1
+                )
+            ]
+            task_obj = TaskObject(
+                intent="browser_search",
+                target="Safari",
+                actions=[TaskAction(type="open_url", target=search_url, parameters={"browser": "Safari"})],
+                status="pending"
+            )
+            return PlanResult(
+                goal=actual_goal,
+                intent="computer_worker",
+                requires_tools=True,
+                summary=f"Opened Safari and searched for '{search_query}'.",
+                steps=steps,
+                verification_criteria=f"Search results for '{search_query}' active in Safari.",
+                task_object=task_obj
+            )
+
+        # 5. Gmail & Send Email: "Open Gmail and send this email" / "Open Gmail and send email to..."
+        is_gmail_compound = ("gmail" in g_lower or ("mail" in words and "send" in words)) and not any(k in g_lower for k in ("send email to", "send an email to"))
+        if is_gmail_compound and not any(k in g_lower for k in ("call ", "facetime")):
+            m_to = re.search(r'(?:to|recipient)\s+([a-zA-Z0-9_@.\s]+?)(?:\s+(?:that|about|saying)|$)', actual_goal)
+            to_addr = m_to.group(1).strip() if m_to else (ctx_people[0] if ctx_people else "recipient")
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Open Gmail in browser",
+                    tool_name="app_control",
+                    action="open_url",
+                    parameters={"url": "https://mail.google.com", "browser": "Safari"},
+                    expected_outcome="Gmail interface loaded",
+                    risk_level=1
+                ),
+                PlanStep(
+                    step_id=2,
+                    title=f"Send email to '{to_addr}'",
+                    tool_name="communication",
+                    action="send_email",
+                    parameters={"to": to_addr, "subject": "Update", "body": "this email"},
+                    expected_outcome=f"Email sent to '{to_addr}'",
+                    risk_level=2
+                )
+            ]
+            task_obj = TaskObject(
+                intent="send_email",
+                target=to_addr,
+                actions=[TaskAction(type="send_email", target=to_addr, parameters={"to": to_addr})],
+                status="pending"
+            )
+            return PlanResult(
+                goal=actual_goal,
+                intent="computer_worker",
+                requires_tools=True,
+                summary=f"Opened Gmail and sent email to '{to_addr}'.",
+                steps=steps,
+                verification_criteria=f"Email dispatched to '{to_addr}'.",
+                task_object=task_obj
+            )
+
         # 0. Voice / Video Calls (e.g. "call Krishna", "call Krishna using WhatsApp")
-        if any(w in ("call", "facetime", "ring") for w in words) and not any(w in ("meeting", "schedule") for w in words):
+        if any(w in ("call", "facetime", "ring") for w in words) and not any(w in ("meeting", "schedule") for w in words) and (not words or words[0] != "send"):
             recipient = "Someone"
             app = None
             if "using" in g_lower:
@@ -334,7 +584,6 @@ class MockProvider(LLMProvider):
             browser = "Google Chrome" if "chrome" in g_lower else "Safari"
             m_search = re.search(r'(?:search for|find|look up)\s+([^,\.\n]+?)(?:\s+on\s+youtube|\s+site|\s*$)', g_lower)
             query = m_search.group(1).strip() if m_search else "search"
-            import urllib.parse
             url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
             task_obj = TaskObject(
                 intent="search",
@@ -379,7 +628,6 @@ class MockProvider(LLMProvider):
             if not query or query in ("safari", "chrome", "browser"):
                 query = "web"
 
-            import urllib.parse
             url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
             task_obj = TaskObject(
                 intent="web_search",
@@ -439,7 +687,6 @@ class MockProvider(LLMProvider):
                 "wikipedia": "https://www.wikipedia.org"
             }
 
-            import urllib.parse
             if clean_target in KNOWN_WEB_SERVICES:
                 url = KNOWN_WEB_SERVICES[clean_target]
             elif any(clean_target.endswith(tld) for tld in (".com", ".org", ".io", ".net", ".edu", ".gov", ".co")):
@@ -538,15 +785,17 @@ class MockProvider(LLMProvider):
         # 0.6. Open Project (e.g. "open my ResumeIQ project", "open project ResumeIQ")
         if "project" in g_lower and any(w in ("open", "switch", "launch") for w in words):
             proj_name = "project"
-            m_proj = re.search(r'(?:open\s+(?:my\s+)?|switch\s+to\s+(?:my\s+)?)?([a-zA-Z0-9_\-]+)\s+project', g_lower)
+            m_proj = re.search(r'(?:open\s+(?:my\s+)?|switch\s+to\s+(?:my\s+)?)?([a-zA-Z0-9_\-]+)\s+project', actual_goal, re.IGNORECASE)
             if m_proj and m_proj.group(1).lower() not in ("the", "a", "my"):
                 proj_name = m_proj.group(1).strip()
             else:
-                m_proj2 = re.search(r'project\s+([a-zA-Z0-9_\-]+)', g_lower)
+                m_proj2 = re.search(r'project\s+([a-zA-Z0-9_\-]+)', actual_goal, re.IGNORECASE)
                 if m_proj2:
                     proj_name = m_proj2.group(1).strip()
                 else:
                     proj_name = "ResumeIQ" if "resumeiq" in g_lower else "workspace"
+            if proj_name.lower() == "resumeiq":
+                proj_name = "ResumeIQ"
 
             task_obj = TaskObject(
                 intent="open_project",
@@ -811,17 +1060,21 @@ class MockProvider(LLMProvider):
             )
 
         # 4. Communication (Email & Message)
-        if any(w in ("email", "mail", "message", "sms", "text", "imessage") for w in words):
+        if any(w in ("email", "mail", "message", "sms", "text", "imessage") for w in words) or (words and words[0] == "send"):
             is_email = any(w in ("email", "mail") for w in words)
             action = "send_email" if is_email else "send_message"
             
-            to_val = "recipient@example.com"
+            to_val = ctx_chat or (ctx_people[0] if ctx_people else "recipient@example.com")
             email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', g_lower)
             if email_match:
                 to_val = email_match.group(0)
             elif " to " in g_lower:
                 after_to = g_lower.split(" to ")[1].split()[0]
                 to_val = after_to
+            else:
+                m_send = re.search(r'send\s+([A-Za-z0-9_\s]+?)(?:\s+(?:that|about|saying|message)|$)', actual_goal, re.IGNORECASE)
+                if m_send and m_send.group(1).lower() not in ("a", "the", "this", "her", "him", "them"):
+                    to_val = m_send.group(1).strip()
 
             subject_val = "Notification from JARVIS"
             subj_match = re.search(r'subject\s+([^,]+)', actual_goal, re.IGNORECASE)
